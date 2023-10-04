@@ -5,3 +5,4 @@ models/
 demo_output/
 core/__pycache__
 __pycache__
+*.ipynb
