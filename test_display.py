@@ -181,13 +181,6 @@ def test_display(args):
             flow_up = padder.unpad(flow_up).squeeze()
             display_imglist.append(-flow_up.cpu().numpy().squeeze())
             
-            # plt.imshow(display_imglist[0]*255)
-            # plt.show()
-            # plt.imshow(display_imglist[1])
-            # plt.show()
-            # plt.imshow(display_imglist[2], cmap='jet')
-            # plt.show()
-            
 
             # Random exposure image
             left_img_b_exp = exposure_change(left_img_b, exp_rand_l)
