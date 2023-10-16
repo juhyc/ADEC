@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from core.raft_stereo import RAFTStereo
-from core.utils.utils import InputPadder
+from raft_stereo import RAFTStereo
+from utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
 
@@ -22,7 +22,14 @@ def load_image(imfile):
 
 def demo(args):
     model = torch.nn.DataParallel(RAFTStereo(args), device_ids=[0])
-    model.load_state_dict(torch.load(args.restore_ckpt))
+    
+    checkpoint = torch.load(args.restore_ckpt)
+    combined_model_state_dict = checkpoint
+    raft_state_dict = {k.replace('RAFTStereo.',''): v for k, v in combined_model_state_dict.items() if 'RAFTStereo' in k}
+    
+    # model.load_state_dict(torch.load(args.restore_ckpt))
+
+    model.load_state_dict(raft_state_dict)
 
     model = model.module
     model.to(DEVICE)
@@ -43,15 +50,8 @@ def demo(args):
             padder = InputPadder(image1.shape, divis_by=32)
             image1, image2 = padder.pad(image1, image2)
 
-            _, flow_up = model(image1, image2, iters=args.valid_iters, test_mode=True)
-            a = model(image1, image2, iters=args.valid_iters, test_mode=True)
-            print(a)
-            print(type(a))
-            print(a.shape)
-            
-            print("before squeeze", flow_up.shape)
+            _, flow_up = model(image1/255.0, image2/255.0, iters=args.valid_iters, test_mode=True)
             flow_up = padder.unpad(flow_up).squeeze()
-            print("after squeeze", flow_up.shape)
 
             file_stem = imfile1.split('/')[-2]
             if args.save_numpy:

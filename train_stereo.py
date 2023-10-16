@@ -141,6 +141,7 @@ def train(args):
 
     if args.restore_ckpt is not None:
         assert args.restore_ckpt.endswith(".pth")
+        
         logging.info("Loading checkpoint...")
         
         checkpoint = torch.load(args.restore_ckpt)

@@ -70,6 +70,25 @@ def stack_histogram(list_of_histogram):
 
     return batch_stacked_histograms
 
+def calculate_histograms(left_ldr_image, right_ldr_image):
+    
+    #^ Calculate histogram with multi scale
+    histogram_coarest_l = histogram_subimage(left_ldr_image, 1)
+    histogram_intermediate_l = histogram_subimage(left_ldr_image, 3)
+    histogram_finest_l = histogram_subimage(left_ldr_image,7)
+    
+    histogram_coarest_r = histogram_subimage(right_ldr_image, 1)
+    histogram_intermediate_r = histogram_subimage(right_ldr_image, 3)
+    histogram_finest_r = histogram_subimage(right_ldr_image, 7)
+    
+    #^ Stack histogram [256,59]
+    list_of_histograms_l = [histogram_coarest_l, histogram_intermediate_l, histogram_finest_l]
+    stacked_histo_tensor_l = stack_histogram(list_of_histograms_l)
+
+    list_of_histograms_r = [histogram_coarest_r, histogram_intermediate_r, histogram_finest_r]
+    stacked_histo_tensor_r = stack_histogram(list_of_histograms_r)
+    
+    return stacked_histo_tensor_l, stacked_histo_tensor_r
 
 
 # & Show historgram by different grid_size

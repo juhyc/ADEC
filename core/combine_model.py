@@ -30,6 +30,11 @@ class CombineModel(nn.Module):
         self.args = args
         self.GlobalFeatureNet = GlobalFeatureNet()
         self.RAFTStereo = RAFTStereo(args)
+        
+    def exposure_change(self, image, exposure_factor):
+        image = image * exposure_factor
+        image = torch.clamp(image, min = 0, max = 1)
+        return image
     
     def convert_to_tensor(self, image):
         if isinstance(image, Image.Image):
@@ -102,11 +107,11 @@ class CombineModel(nn.Module):
         
         # ! Tensor with 2 elements cannot be converted to Scalar
         # ! output_l, output_r shape [batch_size, estimated value]
-        shifted_exp_l = exposure_shift(exp_rand_l, output_l.mean().item())
-        shifted_exp_r = exposure_shift(exp_rand_r, output_r.mean().item())
+        # shifted_exp_l = self.exposure_change(exp_rand_l, output_l.mean().item())
+        # shifted_exp_r = self.exposure_change(exp_rand_r, output_r.mean().item())
         
-        # * Simulate Image LDR with shited exposure value
-        sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
+        # * Simulate Image LDR with shifted exposure value
+        sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, output_l.mean().item(), output_r.mean().item())
         
         # RAFT
         # padder = InputPadder(image1.shape, divis_by=32)

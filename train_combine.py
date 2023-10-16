@@ -153,6 +153,8 @@ def train(args):
         # print("Checkpoint keys:", checkpoint.keys())
         # print("RAFT model keys:", model.module.RAFTStereo.state_dict().keys())
         # model.load_state_dict(checkpoint, strict=True)
+        # * downsampling = 3 인 경우
+        del checkpoint['module.update_block.mask.2.weight'], checkpoint['module.update_block.mask.2.bias']
         model.module.RAFTStereo.load_state_dict(checkpoint, strict=False)
         logging.info(f"Done loading checkpoint")
 
@@ -208,6 +210,12 @@ def train(args):
             if total_steps > args.num_steps:
                 should_keep_training = False
                 break
+            
+            #^ save intermediate checkpoint file to display
+            if total_steps%100 == 0:
+                save_path = Path('checkpoints/%s_%d_epoch.pth' % (args.name, total_steps))
+                logging.info(f"Saving intermediate file {save_path}")
+                torch.save(model.state_dict(), save_path)
 
         if len(train_loader) >= 10000:
             save_path = Path('checkpoints/%d_epoch_%s.pth.gz' % (total_steps + 1, args.name))
@@ -224,7 +232,7 @@ def train(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='raft-stereo', help="name your experiment")
+    parser.add_argument('--name', default='saec', help="name your experiment")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
 
