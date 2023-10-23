@@ -18,6 +18,35 @@ import core.stereo_datasets as datasets
 
 DEVICE = 'cuda'
 
+def check_hdr_image(image):
+    print(type(image))
+    print(image.shape)
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[0].cpu().permute(1,2,0)
+        temp = temp.numpy().astype(np.uint8)
+    plt.imshow(temp)
+    plt.show()
+
+def check_ldr_image(image):
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[0].cpu().permute(1,2,0)
+        temp = torch.clamp(temp*255, 0, 255)
+        temp = temp.numpy().astype(np.uint8)
+    plt.imshow(temp)
+    plt.show()
+    
+def check_ldr_image2(image):
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[1].cpu().permute(1,2,0)
+        temp = torch.clamp(temp*255, 0, 255)
+        temp = temp.numpy().astype(np.uint8)
+    plt.imshow(temp)
+    plt.show()
+    
+
 def load_image(imfile):
     img = np.array(imfile).astype(np.uint8)
     img = torch.from_numpy(img).permute(2, 0, 1).float()
@@ -36,11 +65,18 @@ class CombineModel(nn.Module):
         image = torch.clamp(image, min = 0, max = 1)
         return image
     
+    def exposure_shift(self, before_exposure, predicted_exposure, alpha = 0.5):
+        difference = predicted_exposure - before_exposure
+        adjusted_difference = alpha * difference
+        shifted_exposure = before_exposure + adjusted_difference
+    
+        return shifted_exposure
+    
     def convert_to_tensor(self, image):
         if isinstance(image, Image.Image):
             to_tensor = ToTensor()
             return to_tensor(image)
-        return image    
+        return image
      
     def simulator_before_saec(self, left_hdr_image, right_hdr_image):
         
@@ -61,15 +97,16 @@ class CombineModel(nn.Module):
     
     def simulator_after_saec(self, left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r):
         
-        a_l_s, b_l_s = cal_dynamic_range(left_ldr_image, shifted_exp_l)
-        a_r_s, b_r_s = cal_dynamic_range(right_ldr_image, shifted_exp_r)
-
+        a_l_s, b_l_s = cal_dynamic_range(left_ldr_image*255.0, shifted_exp_l)
+        a_r_s, b_r_s = cal_dynamic_range(right_ldr_image*255.0, shifted_exp_r)
+        
+        # ! 문제
         sim_left_ldr_image = adjust_dr(left_hdr_image, shifted_exp_l, (a_l_s, b_l_s))
         sim_right_ldr_image = adjust_dr(right_hdr_image, shifted_exp_r, (a_r_s, b_r_s))
 
         sim_left_ldr_image = poisson_gauss_noise(sim_left_ldr_image, iso = 100)
         sim_right_ldr_image = poisson_gauss_noise(sim_right_ldr_image, iso = 100)
-        
+
         return sim_left_ldr_image, sim_right_ldr_image
     
     def calculate_histograms(self, left_ldr_image, right_ldr_image):
@@ -94,11 +131,19 @@ class CombineModel(nn.Module):
     
     
         
-    def forward(self, left_hdr_image, right_hdr_image, iters=12, flow_init=None, test_mode=False):
-        
+    def forward(self, left_hdr_image, right_hdr_image, iters=14, flow_init=None, test_mode=False):
+        # ToDo 중간 결과 이미지 출력 확인
+        # todo) left_hdr_image, left_ldr_image, output_l 확인 완
+        # print("====left_hdr_image====")
+        # check_hdr_image(left_hdr_image)
+
         #* Simulator Module HDR -> LDR
         left_ldr_image, right_ldr_image, exp_rand_l, exp_rand_r  = self.simulator_before_saec(left_hdr_image, right_hdr_image)
 
+        # print("====left_ldr_image====")
+        # check_ldr_image(left_ldr_image)
+        # check_ldr_image(right_ldr_image)
+        
         stacked_histo_tensor_l, stacked_histo_tensor_r = self.calculate_histograms(left_ldr_image, right_ldr_image)
         
         #* Global FeatureNetwork    
@@ -107,28 +152,32 @@ class CombineModel(nn.Module):
         
         # ! Tensor with 2 elements cannot be converted to Scalar
         # ! output_l, output_r shape [batch_size, estimated value]
-        # shifted_exp_l = self.exposure_change(exp_rand_l, output_l.mean().item())
-        # shifted_exp_r = self.exposure_change(exp_rand_r, output_r.mean().item())
+  
+        shifted_exp_l = self.exposure_shift(exp_rand_l, output_l.mean().item())
+        shifted_exp_r = self.exposure_shift(exp_rand_r, output_r.mean().item())
+        
+        print("====Random exp values====")
+        print(f"Random exp_l : {exp_rand_l}, Random exp_r : {exp_rand_r}")
+        print("====before shifted exp values====")
+        print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
+        print("====shifted exp values====")
+        print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
+        # shifted_exp_l = output_l.mean().item()
+        # shifted_exp_r = output_r.mean().item()
         
         # * Simulate Image LDR with shifted exposure value
-        sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, output_l.mean().item(), output_r.mean().item())
+        sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
+        # print("====simluated left ldr image====")
+        # check_ldr_image(sim_left_ldr_image)
+        # check_ldr_image(sim_right_ldr_image)
         
-        # RAFT
-        # padder = InputPadder(image1.shape, divis_by=32)
-        # image1, image2 = padder.pad(image1, image2)
         
         # ! If input images are batch
         # _, flow_up = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image)
-        flow_up = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image)
-        flow_up = flow_up[0]
+   
+        flow_predictions = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image, iters = 12) # list, list[0]= [B, 1, H, W]
         
-        # print(type(flow_up))
-        # print(flow_up)
-        # print(flow_up.shape)
-        
-        flow_up = flow_up.squeeze()
-        
-        return flow_up
+        return flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image
 
 
     

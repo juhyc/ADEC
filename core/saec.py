@@ -125,7 +125,9 @@ class GlobalFeatureNet(nn.Module):
         self.fc_layers = nn.Sequential(
             nn.Linear(2048, 1024),  # Adjust this if needed
             nn.ReLU(),
-            nn.Linear(1024, 16),
+            nn.Linear(1024, 256),
+            nn.ReLU(),
+            nn.Linear(256, 16),
             nn.ReLU(),
             nn.Linear(16, 1),
         )
@@ -148,8 +150,8 @@ class GlobalFeatureNet(nn.Module):
 
 
 
-def exposure_shift(before_expoure, predicted_exposure, smoothing = 0.9):
-    shifted_exposure = before_expoure * predicted_exposure**(1-smoothing)
+def exposure_shift(before_exposure, predicted_exposure, smoothing = 0.9):
+    shifted_exposure = before_exposure * predicted_exposure**(1-smoothing)
     
     return shifted_exposure
 

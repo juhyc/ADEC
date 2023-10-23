@@ -15,7 +15,7 @@ from core.combine_model import CombineModel
 
 from evaluate_stereo import *
 import core.stereo_datasets as datasets
-
+import matplotlib.pyplot as plt
 
 try:
     from torch.cuda.amp import GradScaler
@@ -80,6 +80,51 @@ def fetch_optimizer(args, model):
 
     return optimizer, scheduler
 
+# * Visualization flow_prediction during Training
+def visualize_flow_cmap(flow_prediction, iters):
+    # flow_prediction list case
+    if len(flow_prediction) == iters:
+        flow_up_image = flow_prediction[-1][0].clone().detach()
+    # flow_gt
+    elif len(flow_prediction.shape) == 4:
+        flow_up_image = flow_prediction[0].detach()
+    # Valid
+    elif len(flow_prediction.shape) == 3:
+        flow_up_image = -flow_prediction[0].unsqueeze(0).detach()
+    
+    
+    flow_up_image = -flow_up_image.cpu().numpy().squeeze()
+    
+    flow_up_image = (flow_up_image - flow_up_image.min()) / (flow_up_image.max() - flow_up_image.min())
+    
+    colored_flow_image = plt.cm.jet(flow_up_image)
+    colored_flow_image = (colored_flow_image[...,:3] * 255).astype(np.uint8)
+    colored_flow_image = np.transpose(colored_flow_image, (2,0,1))
+    
+    return colored_flow_image
+
+# * Visualization train stereo image during Training
+def visualize_img(image):
+    if len(image.shape) == 3:
+        temp = image.unsqueeze(0)
+    
+    temp = image.clone().detach()
+    temp = temp[0].cpu().permute(1,2,0)
+    temp = torch.clamp(temp, 0, 255)
+    temp = temp.numpy().astype(np.uint8)
+    temp = np.transpose(temp, (2,0,1))
+    return temp
+
+
+def check_ldr_image(image):
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[0].cpu().permute(1,2,0)
+        temp = torch.clamp(temp*255, 0, 255)
+        temp = temp.numpy().astype(np.uint8)
+    return np.transpose(temp, (2,0,1))
+    # plt.imshow(temp)
+    # plt.show()
 
 class Logger:
 
@@ -135,7 +180,6 @@ class Logger:
 # ^ Train
 def train(args):
 
-    # model = nn.DataParallel(RAFTStereo(args))
     model = nn.DataParallel(CombineModel(args))
     print("Parameter Count: %d" % count_parameters(model))
     
@@ -150,12 +194,10 @@ def train(args):
         assert args.restore_ckpt.endswith(".pth")
         logging.info("Loading checkpoint...")
         checkpoint = torch.load(args.restore_ckpt)
-        # print("Checkpoint keys:", checkpoint.keys())
-        # print("RAFT model keys:", model.module.RAFTStereo.state_dict().keys())
-        # model.load_state_dict(checkpoint, strict=True)
         # * downsampling = 3 인 경우
         del checkpoint['module.update_block.mask.2.weight'], checkpoint['module.update_block.mask.2.bias']
         model.module.RAFTStereo.load_state_dict(checkpoint, strict=False)
+        
         logging.info(f"Done loading checkpoint")
 
     model.cuda()
@@ -176,7 +218,29 @@ def train(args):
             image1, image2, flow, valid = [x.cuda() for x in data_blob]
 
             assert model.training
-            flow_predictions = model(image1, image2, iters=args.train_iters)
+            flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image = model(image1, image2, iters=args.train_iters )
+            
+            print("Test flow predictions")
+            print(len(flow_predictions))
+            
+            # check_ldr_image(sim_left_ldr_image)
+            # check_ldr_image(sim_right_ldr_image)
+
+            # ^ visualize during training
+
+            logger.writer.add_image('B_Training left',visualize_img(image1), global_batch_num)
+            logger.writer.add_image('B_Training right',visualize_img(image2), global_batch_num)
+            
+            logger.writer.add_image('C_Simulated left LDR image', check_ldr_image(left_ldr_image), global_batch_num)
+            logger.writer.add_image('C_Simulated right LDR image', check_ldr_image(right_ldr_image), global_batch_num)
+            
+            logger.writer.add_image('D_Adjusted left LDR image', check_ldr_image(sim_left_ldr_image), global_batch_num)
+            logger.writer.add_image('D_Adjusted Right LDR image', check_ldr_image(sim_right_ldr_image), global_batch_num)
+            
+            logger.writer.add_image('A_Disparity_gt', visualize_flow_cmap(flow, args.train_iters), global_batch_num)
+            logger.writer.add_image('Valid correspondences mask', valid[0].unsqueeze(0), global_batch_num)
+            logger.writer.add_image('A_Disparity_prediction_c', visualize_flow_cmap(flow_predictions, args.train_iters), global_batch_num)
+
             assert model.training
 
             loss, metrics = sequence_loss(flow_predictions, flow, valid)
