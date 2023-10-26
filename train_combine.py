@@ -223,16 +223,17 @@ def train(args):
             
             model.load_state_dict(combined_state_dict)
         
-        print(f"Combine model parameter keys : {len(model.state_dict().keys())}")
-        print(f"Number of changed weight : {count}")
-        print("======Check keys======")
+        # * Check loading checkpoint keys
+        # print(f"Combine model parameter keys : {len(model.state_dict().keys())}")
+        # print(f"Number of changed weight : {count}")
+        # print("======Check keys======")
         
-        missing_keys = model.state_dict().keys() - combined_state_dict.keys()
-        unexpected_keys = combined_state_dict.keys() - model.state_dict().keys()
+        # missing_keys = model.state_dict().keys() - combined_state_dict.keys()
+        # unexpected_keys = combined_state_dict.keys() - model.state_dict().keys()
         
-        print("Missing keys:", missing_keys)
-        print("Unexpected keys:", unexpected_keys)
-        print("===============================================")
+        # print("Missing keys:", missing_keys)
+        # print("Unexpected keys:", unexpected_keys)
+        # print("===============================================")
                 
         logging.info(f"Done loading checkpoint")
     
@@ -242,7 +243,7 @@ def train(args):
     model.module.RAFTStereo.freeze_bn() # We keep BatchNorm frozen
     # model.module.freeze_bn() # We keep BatchNorm frozen
 
-    validation_frequency = 10000
+    validation_frequency = 10 #10000
 
     scaler = GradScaler(enabled=args.mixed_precision)
 
@@ -290,13 +291,15 @@ def train(args):
             scaler.update()
 
             logger.push(metrics)
-
+            
+            # Todo) Validation code 수정
             if total_steps % validation_frequency == validation_frequency - 1:
+                print("Validation 체크체크체크")
                 save_path = Path('checkpoints/%d_%s.pth' % (total_steps + 1, args.name))
                 logging.info(f"Saving file {save_path.absolute()}")
                 torch.save(model.state_dict(), save_path)
 
-                results = validate_things(model.module, iters=args.valid_iters)
+                results = validate_kitti(model.module, iters=args.valid_iters)
 
                 logger.write_dict(results)
 

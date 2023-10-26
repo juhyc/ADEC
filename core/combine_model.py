@@ -150,12 +150,13 @@ class CombineModel(nn.Module):
         shifted_exp_l = self.exposure_shift(exp_rand_l, output_l.mean().item())
         shifted_exp_r = self.exposure_shift(exp_rand_r, output_r.mean().item())
         
-        print("====Random exp values====")
-        print(f"Random exp_l : {exp_rand_l}, Random exp_r : {exp_rand_r}")
-        print("====before shifted exp values====")
-        print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
-        print("====shifted exp values====")
-        print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
+        # * Check Exposure values
+        # print("====Random exp values====")
+        # print(f"Random exp_l : {exp_rand_l}, Random exp_r : {exp_rand_r}")
+        # print("====before shifted exp values====")
+        # print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
+        # print("====shifted exp values====")
+        # print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
         
         # * Simulate Image LDR with shifted exposure value
         sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
