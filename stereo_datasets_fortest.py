@@ -16,7 +16,7 @@ import os.path as osp
 
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
-
+import matplotlib.pyplot as plt
 
 class StereoDataset(data.Dataset):
     def __init__(self, aug_params=None, sparse=False, reader=None):
@@ -89,6 +89,7 @@ class StereoDataset(data.Dataset):
                 img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
             else:
                 img1, img2, flow = self.augmentor(img1, img2, flow)
+        
 
         img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
         img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
@@ -105,6 +106,7 @@ class StereoDataset(data.Dataset):
             img2 = F.pad(img2, [padW]*2 + [padH]*2)
 
         flow = flow[:1]
+        
         
         return self.image_list[index] + [self.disparity_list[index]], img1, img2, flow, valid.float()
 

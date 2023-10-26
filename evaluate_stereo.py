@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from raft_stereo import RAFTStereo, autocast
-import stereo_datasets as datasets
+import stereo_datasets_fortest as datasets
 from utils.utils import InputPadder
 
 def count_parameters(model):

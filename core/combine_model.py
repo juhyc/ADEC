@@ -131,18 +131,12 @@ class CombineModel(nn.Module):
     
     
         
-    def forward(self, left_hdr_image, right_hdr_image, iters=14, flow_init=None, test_mode=False):
+    def forward(self, left_hdr_image, right_hdr_image, iters=12, flow_init=None, test_mode=False):
         # ToDo 중간 결과 이미지 출력 확인
         # todo) left_hdr_image, left_ldr_image, output_l 확인 완
-        # print("====left_hdr_image====")
-        # check_hdr_image(left_hdr_image)
 
         #* Simulator Module HDR -> LDR
         left_ldr_image, right_ldr_image, exp_rand_l, exp_rand_r  = self.simulator_before_saec(left_hdr_image, right_hdr_image)
-
-        # print("====left_ldr_image====")
-        # check_ldr_image(left_ldr_image)
-        # check_ldr_image(right_ldr_image)
         
         stacked_histo_tensor_l, stacked_histo_tensor_r = self.calculate_histograms(left_ldr_image, right_ldr_image)
         
@@ -162,15 +156,9 @@ class CombineModel(nn.Module):
         print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
         print("====shifted exp values====")
         print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
-        # shifted_exp_l = output_l.mean().item()
-        # shifted_exp_r = output_r.mean().item()
         
         # * Simulate Image LDR with shifted exposure value
         sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
-        # print("====simluated left ldr image====")
-        # check_ldr_image(sim_left_ldr_image)
-        # check_ldr_image(sim_right_ldr_image)
-        
         
         # ! If input images are batch
         # _, flow_up = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image)

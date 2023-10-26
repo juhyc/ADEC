@@ -1,5 +1,8 @@
 from __future__ import print_function, division
 
+import sys
+sys.path.append('core')
+
 import argparse
 import logging
 import numpy as np
@@ -11,12 +14,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from core.raft_stereo import RAFTStereo
-from core.combine_model import CombineModel
-from core.utils.utils import InputPadder
 
 from evaluate_stereo import *
 import core.stereo_datasets as datasets
 import matplotlib.pyplot as plt
+from PIL import Image
+
+from core.utils.utils import InputPadder
 
 try:
     from torch.cuda.amp import GradScaler
@@ -34,7 +38,7 @@ except:
         def update(self):
             pass
 
-# ^ Raft sequence loss
+
 def sequence_loss(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700):
     """ Loss function defined over sequence of flow predictions """
 
@@ -71,7 +75,7 @@ def sequence_loss(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700):
 
     return flow_loss, metrics
 
-# ^ Optimizer
+
 def fetch_optimizer(args, model):
     """ Create the optimizer and learning rate scheduler """
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wdecay, eps=1e-8)
@@ -82,20 +86,16 @@ def fetch_optimizer(args, model):
     return optimizer, scheduler
 
 # * Visualization flow_prediction during Training
-def visualize_flow_cmap(flow_prediction, image1):
-    
+def visualize_flow_cmap(flow_prediction, iters):
     # flow_prediction list case
-    if isinstance(flow_prediction, list):
+    if len(flow_prediction) == iters:
         flow_up_image = flow_prediction[-1][0].clone().detach()
     # flow_gt
-    elif isinstance(flow_prediction, torch.Tensor) and len(flow_prediction.shape) == 4:
-        # padder = InputPadder(image1.shape, divis_by = 32)
-        # flow_prediction = padder.unpad(flow_prediction)
-        flow_up_image = flow_prediction[0].detach()
-
+    elif len(flow_prediction.shape) == 4:
+        flow_up_image = flow_prediction[0]
     # Valid
-    elif isinstance(flow_prediction, torch.Tensor) and len(flow_prediction.shape) == 3:
-        flow_up_image = -flow_prediction[0].unsqueeze(0).detach()
+    elif len(flow_prediction.shape) == 3:
+        flow_up_image = -flow_prediction[0].unsqueeze(0)
     
     
     flow_up_image = -flow_up_image.cpu().numpy().squeeze()
@@ -119,17 +119,6 @@ def visualize_img(image):
     temp = temp.numpy().astype(np.uint8)
     temp = np.transpose(temp, (2,0,1))
     return temp
-
-
-def check_ldr_image(image):
-    if isinstance(image, torch.Tensor):
-        temp = image.clone().detach()
-        temp = temp[0].cpu().permute(1,2,0)
-        temp = torch.clamp(temp*255, 0, 255)
-        temp = temp.numpy().astype(np.uint8)
-    return np.transpose(temp, (2,0,1))
-    # plt.imshow(temp)
-    # plt.show()
 
 class Logger:
 
@@ -181,66 +170,30 @@ class Logger:
         self.writer.close()
 
 
-# ^ Train
 def train(args):
 
-    model = torch.nn.DataParallel(CombineModel(args), device_ids=[0])
-    # model = nn.DataParallel(RAFTStereo(args))
+    model = nn.DataParallel(RAFTStereo(args))
     print("Parameter Count: %d" % count_parameters(model))
-    
-    # !dataloader 수정
+
     train_loader = datasets.fetch_dataloader(args)
     optimizer, scheduler = fetch_optimizer(args, model)
     total_steps = 0
     logger = Logger(model, scheduler)
 
-    # ! RAFT load_state_dict 수정
     if args.restore_ckpt is not None:
         assert args.restore_ckpt.endswith(".pth")
         logging.info("Loading checkpoint...")
-        raft_checkpoint = torch.load(args.restore_ckpt)
-        # * downsampling = 3 인 경우
-        if args.n_downsample == 3:
-            del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
-            # model.module.RAFTStereo.load_state_dict(checkpoint, strict=False)
-            # model.load_state_dict(checkpoint, strict=False)
-            new_raft_state_dict = {}
-            for k, v in raft_checkpoint.items():
-                if k.startswith('module.'):
-                    new_k = k[7:]
-                else:
-                    new_k = k
-                new_raft_state_dict[new_k] = v
-            
-            combined_state_dict = model.state_dict()
-            count = 0
-            
-            for k in new_raft_state_dict.keys():
-                combined_keys = "module.RAFTStereo." + k
-                if combined_keys in combined_state_dict:
-                    combined_state_dict[combined_keys] = new_raft_state_dict[k] 
-                    count += 1
-            
-            model.load_state_dict(combined_state_dict)
+        checkpoint = torch.load(args.restore_ckpt)
         
-        print(f"Combine model parameter keys : {len(model.state_dict().keys())}")
-        print(f"Number of changed weight : {count}")
-        print("======Check keys======")
+        # ! checkpoint
+        del checkpoint['module.update_block.mask.2.weight'], checkpoint['module.update_block.mask.2.bias']
+        model.load_state_dict(checkpoint, strict=False)
         
-        missing_keys = model.state_dict().keys() - combined_state_dict.keys()
-        unexpected_keys = combined_state_dict.keys() - model.state_dict().keys()
-        
-        print("Missing keys:", missing_keys)
-        print("Unexpected keys:", unexpected_keys)
-        print("===============================================")
-                
         logging.info(f"Done loading checkpoint")
-    
+
     model.cuda()
     model.train()
-    # ? RAFT freeze_bn 수정
-    model.module.RAFTStereo.freeze_bn() # We keep BatchNorm frozen
-    # model.module.freeze_bn() # We keep BatchNorm frozen
+    model.module.freeze_bn() # We keep BatchNorm frozen
 
     validation_frequency = 10000
 
@@ -253,28 +206,30 @@ def train(args):
         for i_batch, (_, *data_blob) in enumerate(tqdm(train_loader)):
             optimizer.zero_grad()
             image1, image2, flow, valid = [x.cuda() for x in data_blob]
-
+            
+  
             assert model.training
-            flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image = model(image1, image2, iters=args.train_iters )
+            # TODO) Training 중간 결과 visualization
+            flow_predictions = model(image1, image2, iters=args.train_iters)
             
-            # check_ldr_image(sim_left_ldr_image)
-            # check_ldr_image(sim_right_ldr_image)
-
-            # ^ visualize during training
-
-            logger.writer.add_image('B_Training left',visualize_img(image1), global_batch_num)
-            logger.writer.add_image('B_Training right',visualize_img(image2), global_batch_num)
+            # colored_flow_image = visualize_flow_cmap(flow_predictions)
             
-            logger.writer.add_image('C_Simulated left LDR image', check_ldr_image(left_ldr_image), global_batch_num)
-            logger.writer.add_image('C_Simulated right LDR image', check_ldr_image(right_ldr_image), global_batch_num)
+            # print("len(Flow_prediction)", flow_predictions.shape) #train_iters # shape : list
+            # print("len(FLOW)", len(flow.shape)) # len 2 , shape [B, 1, H, W]
+            # print("len(Valid)", len(valid.shape)) # len2, shape [B, H, W]
             
-            logger.writer.add_image('D_Adjusted left LDR image', check_ldr_image(sim_left_ldr_image), global_batch_num)
-            logger.writer.add_image('D_Adjusted Right LDR image', check_ldr_image(sim_right_ldr_image), global_batch_num)
-            
-            logger.writer.add_image('A_Disparity_gt', visualize_flow_cmap(flow, image1), global_batch_num)
+            # logger.writer.add_image('Training Image 1',image1[0], global_batch_num)
+            # logger.writer.add_image('Training Image 2',image2[0], global_batch_num)
+            logger.writer.add_image('Training Image 1',visualize_img(image1), global_batch_num)
+            logger.writer.add_image('Training Image 2',visualize_img(image2), global_batch_num)
+            logger.writer.add_image('Disparity_gt', visualize_flow_cmap(flow, args.train_iters), global_batch_num)
             logger.writer.add_image('Valid correspondences mask', valid[0].unsqueeze(0), global_batch_num)
-            logger.writer.add_image('A_Disparity_prediction_c', visualize_flow_cmap(flow_predictions, image1), global_batch_num)
-
+            # logger.writer.add_image('Flow', flow[0], global_batch_num)
+            # logger.writer.add_image('Valid', valid[0].unsqueeze(0), global_batch_num)
+            logger.writer.add_image('Disparity_prediction_c', visualize_flow_cmap(flow_predictions, args.train_iters), global_batch_num)
+            # logger.writer.add_image('Disparity_prediction', flow_predictions[-1][0], global_batch_num)
+            
+                        
             assert model.training
 
             loss, metrics = sequence_loss(flow_predictions, flow, valid)
@@ -308,12 +263,6 @@ def train(args):
             if total_steps > args.num_steps:
                 should_keep_training = False
                 break
-            
-            #^ save intermediate checkpoint file to display
-            if total_steps%100 == 0:
-                save_path = Path('checkpoints/%s_%d_epoch.pth' % (args.name, total_steps))
-                logging.info(f"Saving intermediate file {save_path}")
-                torch.save(model.state_dict(), save_path)
 
         if len(train_loader) >= 10000:
             save_path = Path('checkpoints/%d_epoch_%s.pth.gz' % (total_steps + 1, args.name))
@@ -330,7 +279,7 @@ def train(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='saec', help="name your experiment")
+    parser.add_argument('--name', default='raft-stereo', help="name your experiment")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
 

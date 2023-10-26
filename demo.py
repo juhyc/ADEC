@@ -22,6 +22,12 @@ def load_image(imfile):
     img = torch.from_numpy(img).permute(2, 0, 1).float()
     return img[None].to(DEVICE)
 
+def convert_to_tensor(self, image):
+    if isinstance(image, Image.Image):
+        to_tensor = ToTensor()
+        return to_tensor(image)
+    return image
+
 def simul_to_saec_to_simul():
     # * Load image (HDR scene)
     left_image_path = 'datasets/left.png'
@@ -31,8 +37,8 @@ def simul_to_saec_to_simul():
 
     # * Simulate image (HDR -> LDR)
 
-    left_image_np_n = (np.array(left_original_image)/255.0).astype(np.float32)
-    right_image_np_n = (np.array(right_original_image)/255.0).astype(np.float32)
+    left_image_np_n = convert_to_tensor(left_original_image)
+    right_image_np_n = convert_to_tensor(right_original_image)
 
     exp_rand_l, exp_rand_r = generate_random_exposure()
     a_l, b_l = cal_dynamic_range(left_image_np_n, exp_rand_l)
