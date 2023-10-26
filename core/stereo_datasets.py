@@ -249,10 +249,17 @@ class KITTI(StereoDataset):
         super(KITTI, self).__init__(aug_params, sparse=True, reader=frame_utils.readDispKITTI)
         assert os.path.exists(root)
 
-        image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/*_10.png')))
-        image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/*_10.png')))
-        disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
-
+        # Todo) image_set : training/validate 에 따라 loading 되는 부분 수정하기
+        if image_set == 'training':
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/*_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/*_10.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
+        else:
+            image_set = 'training'
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/000000_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/000000_10.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/000000_10.png')))
+            
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
             self.image_list += [ [img1, img2] ]
             self.disparity_list += [ disp ]

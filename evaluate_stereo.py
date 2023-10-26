@@ -61,9 +61,9 @@ def validate_kitti(model, iters=32, mixed_prec=False):
     """ Peform validation using the KITTI-2015 (train) split """
     model.eval()
     aug_params = {}
-    val_dataset = datasets.KITTI(aug_params, image_set='training')
+    val_dataset = datasets.KITTI(aug_params, image_set='validate')
     torch.backends.cudnn.benchmark = True
-
+    
     out_list, epe_list, elapsed_list = [], [], []
     for val_id in range(len(val_dataset)):
         _, image1, image2, flow_gt, valid_gt = val_dataset[val_id]
@@ -73,11 +73,16 @@ def validate_kitti(model, iters=32, mixed_prec=False):
         padder = InputPadder(image1.shape, divis_by=32)
         image1, image2 = padder.pad(image1, image2)
 
+        # ! 수정, validation visualtion, model이 raft가 아닌 Combine model 형태로 반환값이 다름.
         with autocast(enabled=mixed_prec):
             start = time.time()
-            _, flow_pr = model(image1, image2, iters=iters, test_mode=True)
+            # 수정
+            flow_pr, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image = model(image1, image2, iters=iters, test_mode=True)
             end = time.time()
 
+        # 수정
+        flow_pr = flow_pr[-1]
+        
         if val_id > 50:
             elapsed_list.append(end-start)
         flow_pr = padder.unpad(flow_pr).cpu().squeeze(0)
@@ -90,6 +95,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
 
         out = (epe_flattened > 3.0)
         image_out = out[val].float().mean().item()
+        
         image_epe = epe_flattened[val].mean().item()
         if val_id < 9 or (val_id+1)%10 == 0:
             logging.info(f"KITTI Iter {val_id+1} out of {len(val_dataset)}. EPE {round(image_epe,4)} D1 {round(image_out,4)}. Runtime: {format(end-start, '.3f')}s ({format(1/(end-start), '.2f')}-FPS)")
@@ -105,7 +111,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
     avg_runtime = np.mean(elapsed_list)
 
     print(f"Validation KITTI: EPE {epe}, D1 {d1}, {format(1/avg_runtime, '.2f')}-FPS ({format(avg_runtime, '.3f')}s)")
-    return {'kitti-epe': epe, 'kitti-d1': d1}
+    return {'kitti-epe': epe, 'kitti-d1': d1}, -flow_pr, -flow_gt, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image
 
 
 @torch.no_grad()

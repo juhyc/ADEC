@@ -294,17 +294,24 @@ def train(args):
             
             # Todo) Validation code 수정
             if total_steps % validation_frequency == validation_frequency - 1:
-                print("Validation 체크체크체크")
+                print("====Validation====")
+                valid_num = (total_steps / validation_frequency) * 10 + 1
                 save_path = Path('checkpoints/%d_%s.pth' % (total_steps + 1, args.name))
                 logging.info(f"Saving file {save_path.absolute()}")
                 torch.save(model.state_dict(), save_path)
 
-                results = validate_kitti(model.module, iters=args.valid_iters)
+                results, flow_valid, flow_valid_gt, sim_left_valid, sim_right_valid, left_valid, right_valid = validate_kitti(model.module, iters=args.valid_iters)
 
                 logger.write_dict(results)
+                logger.writer.add_image('E_Disparity gt(Valid)', visualize_flow_cmap(flow_valid_gt, image1), valid_num)
+                logger.writer.add_image('E_Disparity prediction_c(Valid)', visualize_flow_cmap(flow_valid, image1), valid_num)
+                logger.writer.add_image('F_Adjusted left LDR image(Valid)', check_ldr_image(sim_left_valid), valid_num)
+                logger.writer.add_image('F_Adjusted right LDR image(Valid)', check_ldr_image(sim_right_valid), valid_num)
+                logger.writer.add_image('G_Simulated left LDR image(Valid)', check_ldr_image(left_valid), valid_num)
+                logger.writer.add_image('G_Simulated right LDR image(Valid)', check_ldr_image(right_valid), valid_num)
 
                 model.train()
-                model.module.freeze_bn()
+                model.module.RAFTStereo.freeze_bn() # 수정
 
             total_steps += 1
 
