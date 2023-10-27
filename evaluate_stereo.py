@@ -55,6 +55,37 @@ def validate_eth3d(model, iters=32, mixed_prec=False):
     print("Validation ETH3D: EPE %f, D1 %f" % (epe, d1))
     return {'eth3d-epe': epe, 'eth3d-d1': d1}
 
+def sequence_loss_valid(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700):
+    """ Loss function defined over sequence of flow predictions """
+
+    n_predictions = len(flow_preds)
+    assert n_predictions >= 1
+    flow_loss = 0.0
+
+    # exlude invalid pixels and extremely large diplacements
+    mag = torch.sum(flow_gt**2, dim=1).sqrt()
+
+    # exclude extremly large displacements
+    valid = ((valid >= 0.5) & (mag < max_flow)).unsqueeze(0) #unsqueeze 차원 1 -> 0
+    assert valid.shape == flow_gt.shape, [valid.shape, flow_gt.shape]
+    assert not torch.isinf(flow_gt[valid.bool()]).any()
+
+    for i in range(n_predictions):
+        assert not torch.isnan(flow_preds[i]).any() and not torch.isinf(flow_preds[i]).any()
+        # We adjust the loss_gamma so it is consistent for any number of RAFT-Stereo iterations
+        adjusted_loss_gamma = loss_gamma**(15/(n_predictions - 1))
+        i_weight = adjusted_loss_gamma**(n_predictions - i - 1)
+        
+        print("크기체크2")
+        print(flow_preds[i].shape, flow_gt.shape)
+        
+        i_loss = (flow_preds[i] - flow_gt).abs()
+        assert i_loss.shape == valid.shape, [i_loss.shape, valid.shape, flow_gt.shape, flow_preds[i].shape]
+        flow_loss += i_weight * i_loss[valid.bool()].mean()
+        
+    return flow_loss
+
+
 
 @torch.no_grad()
 def validate_kitti(model, iters=32, mixed_prec=False):
@@ -70,6 +101,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
         image1 = image1[None].cuda()
         image2 = image2[None].cuda()
 
+
         padder = InputPadder(image1.shape, divis_by=32)
         image1, image2 = padder.pad(image1, image2)
 
@@ -77,15 +109,28 @@ def validate_kitti(model, iters=32, mixed_prec=False):
         with autocast(enabled=mixed_prec):
             start = time.time()
             # 수정
-            flow_pr, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image = model(image1, image2, iters=iters, test_mode=True)
+            flow_pr, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp = model(image1, image2, iters=iters, test_mode=True)
             end = time.time()
-
+        # 수정, valid loss 계산
+        # print(f"flow_pr.shpae : {flow_pr[-1].shape}")
+        # print(f"image1.shape : {image1.shape}")
+        # print(f"flow_gt.shape : {flow_gt.shape}")
+        # print(f"valid_gt.shape : {valid_gt.shape}")
+        
+        
+        # print("validation 에서 flow_predction 하나의 크기")
+        # print(flow_pr[-1].shape)
+        
+        # valid_loss = sequence_loss_valid(flow_pr, flow_gt, valid_gt)
+        # print(f"이건 valid loss : {valid_loss}")
+        
         # 수정
         flow_pr = flow_pr[-1]
         
         if val_id > 50:
             elapsed_list.append(end-start)
         flow_pr = padder.unpad(flow_pr).cpu().squeeze(0)
+        # flow_pr= flow_pr.cpu().squeeze(0)
 
         assert flow_pr.shape == flow_gt.shape, (flow_pr.shape, flow_gt.shape)
         epe = torch.sum((flow_pr - flow_gt)**2, dim=0).sqrt()
@@ -111,7 +156,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
     avg_runtime = np.mean(elapsed_list)
 
     print(f"Validation KITTI: EPE {epe}, D1 {d1}, {format(1/avg_runtime, '.2f')}-FPS ({format(avg_runtime, '.3f')}s)")
-    return {'kitti-epe': epe, 'kitti-d1': d1}, -flow_pr, -flow_gt, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image
+    return {'kitti-epe-Valid': epe, 'kitti-d1-Valid': d1}, -flow_pr, -flow_gt, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp
 
 
 @torch.no_grad()

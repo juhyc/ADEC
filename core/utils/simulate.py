@@ -88,18 +88,19 @@ def denormalized_image(image, s, select_range=(0,1)):
     Returns:
         torch tensor : denormalized image tensor 
     """
-    if not torch.is_tensor(image):
-        raise ValueError("Input image should be a Pytorch Tensor")
+    # if not torch.is_tensor(image):
+    #     raise ValueError("Input image should be a Pytorch Tensor")
     
-    if not torch.is_tensor(s):
-        s = torch.tensor(s).to(image.device)
+    # if not torch.is_tensor(s):
+    #     s = torch.tensor(s).to(image.device)
     
     a,b = select_range[0], select_range[1]
     
     image_denormalized = (b-a) * image + a
     image_denormalized = image_denormalized / s
+
     
-    return image_denormalized
+    return image_denormalized/255.0
 
 # & Calculation dynamic range [a,b] based on exposure factor
 def cal_dynamic_range(image_tensor, exp):

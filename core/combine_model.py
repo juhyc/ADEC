@@ -82,8 +82,11 @@ class CombineModel(nn.Module):
         
         left_image_torch = self.convert_to_tensor(left_hdr_image)
         right_image_torch = self.convert_to_tensor(right_hdr_image)
-            
-        exp_rand_l, exp_rand_r = generate_random_exposure()
+        
+        # ! For sanity check, not random exposure but left low right high    
+        # exp_rand_l, exp_rand_r = generate_random_exposure()
+        exp_rand_l, exp_rand_r = 0.5, 1.5
+        
         a_l, b_l = cal_dynamic_range(left_image_torch, exp_rand_l)
         a_r, b_r = cal_dynamic_range(right_image_torch, exp_rand_r)
         
@@ -106,6 +109,10 @@ class CombineModel(nn.Module):
 
         sim_left_ldr_image = poisson_gauss_noise(sim_left_ldr_image, iso = 100)
         sim_right_ldr_image = poisson_gauss_noise(sim_right_ldr_image, iso = 100)
+        
+
+        sim_left_ldr_image = denormalized_image(sim_left_ldr_image, shifted_exp_l, (a_l_s, b_l_s))
+        sim_right_ldr_image = denormalized_image(sim_right_ldr_image, shifted_exp_r, (a_r_s, b_r_s))
 
         return sim_left_ldr_image, sim_right_ldr_image
     
@@ -151,12 +158,12 @@ class CombineModel(nn.Module):
         shifted_exp_r = self.exposure_shift(exp_rand_r, output_r.mean().item())
         
         # * Check Exposure values
-        # print("====Random exp values====")
-        # print(f"Random exp_l : {exp_rand_l}, Random exp_r : {exp_rand_r}")
-        # print("====before shifted exp values====")
-        # print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
-        # print("====shifted exp values====")
-        # print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
+        print("====Random exp values====")
+        print(f"Random exp_l : {exp_rand_l}, Random exp_r : {exp_rand_r}")
+        print("====before shifted exp values====")
+        print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
+        print("====shifted exp values====")
+        print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
         
         # * Simulate Image LDR with shifted exposure value
         sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
@@ -166,7 +173,7 @@ class CombineModel(nn.Module):
    
         flow_predictions = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image, iters = 12) # list, list[0]= [B, 1, H, W]
         
-        return flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image
+        return flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, {'output_l': output_l, 'output_r':output_r, 'shifted_exp_l':shifted_exp_l, 'shifted_exp_r':shifted_exp_r}
 
 
     
