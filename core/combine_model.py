@@ -110,11 +110,14 @@ class CombineModel(nn.Module):
         sim_left_ldr_image = poisson_gauss_noise(sim_left_ldr_image, iso = 100)
         sim_right_ldr_image = poisson_gauss_noise(sim_right_ldr_image, iso = 100)
         
-
+        # before denormalized
+        sim_left_before_norm = sim_left_ldr_image
+        sim_right_before_norm = sim_right_ldr_image
+        
         sim_left_ldr_image = denormalized_image(sim_left_ldr_image, shifted_exp_l, (a_l_s, b_l_s))
         sim_right_ldr_image = denormalized_image(sim_right_ldr_image, shifted_exp_r, (a_r_s, b_r_s))
 
-        return sim_left_ldr_image, sim_right_ldr_image
+        return sim_left_ldr_image, sim_right_ldr_image, sim_left_before_norm, sim_right_before_norm
     
     def calculate_histograms(self, left_ldr_image, right_ldr_image):
         
@@ -166,14 +169,14 @@ class CombineModel(nn.Module):
         print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
         
         # * Simulate Image LDR with shifted exposure value
-        sim_left_ldr_image, sim_right_ldr_image = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
+        sim_left_ldr_image, sim_right_ldr_image, sim_left_before_norm, sim_right_before_norm = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
         
         # ! If input images are batch
         # _, flow_up = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image)
    
         flow_predictions = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image, iters = 12) # list, list[0]= [B, 1, H, W]
         
-        return flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, {'output_l': output_l, 'output_r':output_r, 'shifted_exp_l':shifted_exp_l, 'shifted_exp_r':shifted_exp_r}
+        return flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, {'output_l': output_l, 'output_r':output_r, 'shifted_exp_l':shifted_exp_l, 'shifted_exp_r':shifted_exp_r}, sim_left_before_norm, sim_right_before_norm
 
 
     

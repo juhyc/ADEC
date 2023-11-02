@@ -109,7 +109,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
         with autocast(enabled=mixed_prec):
             start = time.time()
             # 수정
-            flow_pr, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp = model(image1, image2, iters=iters, test_mode=True)
+            flow_pr, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp, sim_left_before_norm, sim_right_before_norm = model(image1, image2, iters=iters, test_mode=True)
             end = time.time()
         # 수정, valid loss 계산
         # print(f"flow_pr.shpae : {flow_pr[-1].shape}")
@@ -156,7 +156,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
     avg_runtime = np.mean(elapsed_list)
 
     print(f"Validation KITTI: EPE {epe}, D1 {d1}, {format(1/avg_runtime, '.2f')}-FPS ({format(avg_runtime, '.3f')}s)")
-    return {'kitti-epe-Valid': epe, 'kitti-d1-Valid': d1}, -flow_pr, -flow_gt, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp
+    return {'kitti-epe-Valid': epe, 'kitti-d1-Valid': d1}, -flow_pr, -flow_gt, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp, sim_left_before_norm, sim_right_before_norm
 
 
 @torch.no_grad()

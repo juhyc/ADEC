@@ -256,7 +256,7 @@ def train(args):
             image1, image2, flow, valid = [x.cuda() for x in data_blob]
 
             assert model.training
-            flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp = model(image1, image2, iters=args.train_iters ) 
+            flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp, sim_left_before_norm, sim_right_before_norm = model(image1, image2, iters=args.train_iters ) 
             
             # check_ldr_image(sim_left_ldr_image)
             # check_ldr_image(sim_right_ldr_image)
@@ -271,8 +271,11 @@ def train(args):
             logger.writer.add_image('C_Simulated left LDR image', check_ldr_image(left_ldr_image), global_batch_num)
             logger.writer.add_image('C_Simulated right LDR image', check_ldr_image(right_ldr_image), global_batch_num)
             
+            logger.writer.add_image("C'_Before normalized left LDR image", check_ldr_image(sim_left_before_norm), global_batch_num)
+            logger.writer.add_image("C'_Before normalized right LDR iamge", check_ldr_image(sim_right_before_norm), global_batch_num)
+            
             logger.writer.add_image('D_Adjusted left LDR image', check_ldr_image(sim_left_ldr_image), global_batch_num)
-            logger.writer.add_image('D_Adjusted Right LDR image', check_ldr_image(sim_right_ldr_image), global_batch_num)
+            logger.writer.add_image('D_Adjusted right LDR image', check_ldr_image(sim_right_ldr_image), global_batch_num)
             
             logger.writer.add_image('A_Disparity_gt', visualize_flow_cmap(flow, image1), global_batch_num)
             logger.writer.add_image('Valid correspondences mask', valid[0].unsqueeze(0), global_batch_num)
@@ -302,7 +305,7 @@ def train(args):
                 logging.info(f"Saving file {save_path.absolute()}")
                 torch.save(model.state_dict(), save_path)
 
-                results, flow_valid, flow_valid_gt, sim_left_valid, sim_right_valid, left_valid, right_valid, output_exp_valid = validate_kitti(model.module, iters=args.valid_iters)
+                results, flow_valid, flow_valid_gt, sim_left_valid, sim_right_valid, left_valid, right_valid, output_exp_valid, sim_left_before_norm_valid, sim_right_before_norm_valid = validate_kitti(model.module, iters=args.valid_iters)
                 
                 # valid output_exp 확인용
                 output_exp_valid = {"Valid " + key : value for key, value in output_exp_valid.items()}
@@ -311,10 +314,12 @@ def train(args):
                 logger.write_dict(output_exp_valid)
                 logger.writer.add_image('E_Disparity gt(Valid)', visualize_flow_cmap(flow_valid_gt, image1), valid_num)
                 logger.writer.add_image('E_Disparity prediction_c(Valid)', visualize_flow_cmap(flow_valid, image1), valid_num)
-                logger.writer.add_image('F_Adjusted left LDR image(Valid)', check_ldr_image(sim_left_valid), valid_num)
-                logger.writer.add_image('F_Adjusted right LDR image(Valid)', check_ldr_image(sim_right_valid), valid_num)
-                logger.writer.add_image('G_Simulated left LDR image(Valid)', check_ldr_image(left_valid), valid_num)
-                logger.writer.add_image('G_Simulated right LDR image(Valid)', check_ldr_image(right_valid), valid_num)
+                logger.writer.add_image('F_Simulated left LDR image(Valid)', check_ldr_image(left_valid), valid_num)
+                logger.writer.add_image('F_Simulated right LDR image(Valid)', check_ldr_image(right_valid), valid_num)
+                logger.writer.add_image("F'_Before normalized left LDR image(Valid)", check_ldr_image(sim_left_before_norm_valid), valid_num)
+                logger.writer.add_image("F'_Before normalized right LDR image(Valid)", check_ldr_image(sim_right_before_norm_valid), valid_num)
+                logger.writer.add_image('G_Adjusted left LDR image(Valid)', check_ldr_image(sim_left_valid), valid_num)
+                logger.writer.add_image('G_Adjusted right LDR image(Valid)', check_ldr_image(sim_right_valid), valid_num)
 
                 model.train()
                 model.module.RAFTStereo.freeze_bn() # 수정
