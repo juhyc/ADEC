@@ -305,8 +305,8 @@ class SparseFlowAugmentor:
 
 
     def __call__(self, img1, img2, flow, valid):
-        img1, img2 = self.color_transform(img1, img2)
-        img1, img2 = self.eraser_transform(img1, img2)
+        # img1, img2 = self.color_transform(img1, img2)
+        # img1, img2 = self.eraser_transform(img1, img2)
         img1, img2, flow, valid = self.spatial_transform(img1, img2, flow, valid)
 
         img1 = np.ascontiguousarray(img1)

@@ -70,10 +70,10 @@ class RAFTStereo(nn.Module):
     def forward(self, image1, image2, iters=12, flow_init=None, test_mode=False):
         """ Estimate optical flow between pair of frames """
 
-        # image1 = (2 * (image1 / 255.0) - 1.0).contiguous()
-        # image2 = (2 * (image2 / 255.0) - 1.0).contiguous()
-        image1 = (2 * image1 - 1.0).contiguous()
-        image2 = (2 * image2 - 1.0).contiguous()
+        image1 = (2 * (image1 / 255.0) - 1.0).contiguous()
+        image2 = (2 * (image2 / 255.0) - 1.0).contiguous()
+        # image1 = (2 * image1 - 1.0).contiguous()
+        # image2 = (2 * image2 - 1.0).contiguous()
 
         # run the context network
         with autocast(enabled=self.args.mixed_precision):
@@ -139,5 +139,5 @@ class RAFTStereo(nn.Module):
 
         if test_mode:
             return coords1 - coords0, flow_up
-
+        
         return flow_predictions

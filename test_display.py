@@ -94,36 +94,39 @@ def test_display(args):
     # ^ checkpoint split 
     checkpoint = torch.load(args.restore_ckpt)
     combined_model_state_dict = checkpoint
-    
     checkpoint_origin = torch.load('/home/juhyung/SAEC/models/raftstereo-middlebury.pth')
 
     
     global_feature_net_state_dict = {k.replace('GlobalFeatureNet.', ''): v for k, v in combined_model_state_dict.items() if 'GlobalFeatureNet' in k}
-    # raft_state_dict = {k.replace('RAFTStereo.',''): v for k, v in combined_model_state_dict.items() if 'RAFTStereo' in k}
+    raft_state_dict = {k.replace('RAFTStereo.',''): v for k, v in combined_model_state_dict.items() if 'RAFTStereo' in k}
     # ^
     
     # * model load (GlobalFeatureNet)
-    model_gfn = torch.nn.DataParallel(GlobalFeatureNet())
-    model_gfn.load_state_dict(global_feature_net_state_dict)
-    model_gfn = model_gfn.module
+    # model_gfn = torch.nn.DataParallel(GlobalFeatureNet())
+    # model_gfn.load_state_dict(global_feature_net_state_dict)
+    # model_gfn = model_gfn.module
     # model_gfn.to(DEVICE)
     # model_gfn.eval()
     # *
     
     # * model load (RAFT)
     
-    # combine_model = torch.nn.DataParallel(CombineModel(args))
-    # combine_model.load_state_dict(combined_model_state_dict, strict=False)
-    # combine_model = combine_model.module
+    combine_model = torch.nn.DataParallel(CombineModel(args))
+    del checkpoint['module.RAFTStereo.update_block.mask.2.weight'], checkpoint['module.RAFTStereo.update_block.mask.2.bias']
+    combine_model.load_state_dict(checkpoint, strict=False)
+    combine_model = combine_model.module
     
-    # model_gfn = combine_model.GlobalFeatureNet
+    model_gfn = combine_model.GlobalFeatureNet
     model_gfn.to(DEVICE)
     model_gfn.eval()
     
-    # model_raft = combine_model.RAFTStereo
     model_raft = torch.nn.DataParallel(RAFTStereo(args))
+    del raft_state_dict['module.update_block.mask.2.weight'], raft_state_dict['module.update_block.mask.2.bias']
+    model_raft.load_state_dict(raft_state_dict, strict = False)
     model_raft.load_state_dict(checkpoint_origin, strict=False)
     model_raft = model_raft.module
+    
+    # model_raft = combine_model.RAFTStereo
     model_raft.to(DEVICE)
     model_raft.eval()
     
@@ -180,13 +183,6 @@ def test_display(args):
             _, flow_up = model_raft(image1, image2, iters=args.valid_iters, test_mode=True)
             flow_up = padder.unpad(flow_up).squeeze()
             display_imglist.append(-flow_up.cpu().numpy().squeeze())
-            
-            # plt.imshow(display_imglist[0]*255)
-            # plt.show()
-            # plt.imshow(display_imglist[1])
-            # plt.show()
-            # plt.imshow(display_imglist[2], cmap='jet')
-            # plt.show()
             
 
             # Random exposure image

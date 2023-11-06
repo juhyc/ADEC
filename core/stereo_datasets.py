@@ -105,6 +105,7 @@ class StereoDataset(data.Dataset):
             img2 = F.pad(img2, [padW]*2 + [padH]*2)
 
         flow = flow[:1]
+        
         return self.image_list[index] + [self.disparity_list[index]], img1, img2, flow, valid.float()
 
 
@@ -248,10 +249,17 @@ class KITTI(StereoDataset):
         super(KITTI, self).__init__(aug_params, sparse=True, reader=frame_utils.readDispKITTI)
         assert os.path.exists(root)
 
-        image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/*_10.png')))
-        image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/*_10.png')))
-        disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
-
+        # Todo) image_set : training/validate 에 따라 loading 되는 부분 수정하기
+        if image_set == 'training':
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/*_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/*_10.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
+        else:
+            image_set = 'training'
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/000000_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/000000_10.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/000000_10.png')))
+            
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
             self.image_list += [ [img1, img2] ]
             self.disparity_list += [ disp ]
@@ -301,7 +309,7 @@ def fetch_dataloader(args):
             new_dataset = (clean_dataset*4) + (final_dataset*4)
             logging.info(f"Adding {len(new_dataset)} samples from SceneFlow")
         elif 'kitti' in dataset_name:
-            new_dataset = KITTI(aug_params, split=dataset_name)
+            new_dataset = KITTI(aug_params)
             logging.info(f"Adding {len(new_dataset)} samples from KITTI")
         elif dataset_name == 'sintel_stereo':
             new_dataset = SintelStereo(aug_params)*140

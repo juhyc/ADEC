@@ -88,18 +88,19 @@ def denormalized_image(image, s, select_range=(0,1)):
     Returns:
         torch tensor : denormalized image tensor 
     """
-    if not torch.is_tensor(image):
-        raise ValueError("Input image should be a Pytorch Tensor")
+    # if not torch.is_tensor(image):
+    #     raise ValueError("Input image should be a Pytorch Tensor")
     
-    if not torch.is_tensor(s):
-        s = torch.tensor(s).to(image.device)
+    # if not torch.is_tensor(s):
+    #     s = torch.tensor(s).to(image.device)
     
     a,b = select_range[0], select_range[1]
     
     image_denormalized = (b-a) * image + a
     image_denormalized = image_denormalized / s
+
     
-    return image_denormalized
+    return image_denormalized/255.0
 
 # & Calculation dynamic range [a,b] based on exposure factor
 def cal_dynamic_range(image_tensor, exp):
@@ -125,3 +126,111 @@ def generate_random_exposure():
         
     return value1, value2
 
+class ImageFormation:
+    def __init__(self, image, exp, device = 'cpu'):
+        """Initialize image formation model.
+            Set image to phi.
+            Calculate gain, shutter time from exposure value 'exp'.
+
+        Args:
+            image (Image): HDR image
+            exp : exposure
+        """
+        if exp <= 0:
+            raise ValueError("'exp' should be a positive value.")
+        
+        to_tensor = ToTensor()
+        self.device = torch.device(device)
+        self.gauss_var = float(1e-6)
+        self.poisson_scale = float(3.4e-4)
+        # HDR scene
+        if isinstance(image, Image.Image):
+            self.original_phi = to_tensor(image).to(self.device)
+        else:
+            self.original_phi = (image/255.0).to(self.device)
+            
+        self.phi = self.original_phi.clone()
+        # Max shutter speed 15m/s
+        self.T_max = 1.5
+        self.exp = exp
+        # Camera gain and shutter speed
+        self.g = max(1.0, self.exp/self.T_max)
+        self.t = self.exp/self.g
+    
+    def cal_dynamic_range(self, img, exp):
+        """Calculate dynamic range from image statistic and exposure value.
+
+        Args:
+            img : image
+            exp : exposure
+
+        Returns:
+            a,b : caculated dynamic range
+        """
+        
+        mean_intensity = torch.mean(img)
+        std_intensity = torch.std(img)
+        
+        a = mean_intensity - exp * std_intensity
+        b = mean_intensity + exp * std_intensity
+        
+        return a,b
+    
+    
+    
+    def adjust_dr(self, exp):
+                    
+        # if not torch.is_tensor(exp):
+        #     exp = torch.tensor(exp).to(img.device)
+        
+        a,b = self.cal_dynamic_range(exp)
+        
+        img = (exp * self.phi - a) / (b - a)
+        
+        img = torch.clamp(img, 0, 1)
+        
+        return img
+        
+    def denormalized_image(self, img, exp):
+        a, b = self.cal_dynamic_range(img, exp)
+        img_denormalized = (b-a) * img + a
+        img_denormalized = img_denormalized / exp
+        
+        return img_denormalized
+        
+    def noise_modeling(self, iso = float(100.)):
+        """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
+
+        Args:
+            iso : Camera ISO. Defaults to float(100.).
+        """
+
+        # Validation check
+        if torch.any(self.phi < 0) or torch.any(self.phi > 1):
+            raise ValueError("The image values should be between 0 and 1.")
+        if iso <= 0:
+            raise ValueError("ISO value should be positive.")
+        
+        phi = self.phi * self.t * (iso/100.0)
+        
+        gauss_std = torch.sqrt(torch.tensor(self.gauss_var)).to(self.device) * (iso/100.0)
+        poisson_scale = torch.tensor(self.poisson_scale).to(self.device) * (iso/100.0)
+        
+        # Shot noise
+        shot_noise = torch.poisson(phi/poisson_scale) * poisson_scale * self.g
+        # Readout noise
+        readout_noise = self.gauss_var * torch.randn_like(phi) * self.g
+        # ADC noise
+        adc_noise = self.gauss_var * torch.randn_like(phi)
+        
+        noise_hdr = shot_noise + readout_noise + adc_noise
+        
+        noise_hdr = torch.clamp(noise_hdr, 0, 1)
+        
+        # Adjust dynamic range HDR -> LDR
+        a,b = self.cal_dynamic_range(noise_hdr, self.exp)
+        noise_ldr = (self.exp * noise_hdr - a) / (b - a)
+        noise_ldr = torch.clamp(noise_ldr, 0, 1)
+                
+        return noise_ldr
+    

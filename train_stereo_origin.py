@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from torch.utils.tensorboard import SummaryWriter
 import torch
+import torchvision
 import torch.nn as nn
 import torch.optim as optim
 from core.raft_stereo import RAFTStereo
@@ -138,7 +139,7 @@ def train(args):
     optimizer, scheduler = fetch_optimizer(args, model)
     total_steps = 0
     logger = Logger(model, scheduler)
-
+    
     if args.restore_ckpt is not None:
         assert args.restore_ckpt.endswith(".pth")
         
@@ -150,8 +151,9 @@ def train(args):
         # print("Modules keys:", model.module.state_dict().keys())
         # print("RAFT model keys:", model.module.RAFTStereo.state_dict().keys())
         
+        del checkpoint['module.update_block.mask.2.weight'], checkpoint['module.update_block.mask.2.bias']
         
-        model.module.load_state_dict(checkpoint, strict=True)
+        model.module.load_state_dict(checkpoint, strict=False)
         logging.info(f"Done loading checkpoint")
 
     model.cuda()
@@ -174,6 +176,13 @@ def train(args):
             flow_predictions = model(image1, image2, iters=args.train_iters)
             assert model.training
 
+            # add prediction image to TensorBoard
+            
+            # grid_image = torchvision.utils.make_grid(flow_predictions)
+            # logger.writer.add_image('test_images', grid_image, 0)
+            first_image = flow_predictions[0][0]
+            logger.writer.add_image('test_image', first_image, global_batch_num)
+            
             loss, metrics = sequence_loss(flow_predictions, flow, valid)
             logger.writer.add_scalar("live_loss", loss.item(), global_batch_num)
             logger.writer.add_scalar(f'learning_rate', optimizer.param_groups[0]['lr'], global_batch_num)
