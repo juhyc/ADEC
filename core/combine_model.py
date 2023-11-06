@@ -16,6 +16,7 @@ from core.utils.utils import InputPadder
 import core.stereo_datasets as datasets
 
 
+
 DEVICE = 'cuda'
 
 def check_hdr_image(image):
@@ -65,7 +66,7 @@ class CombineModel(nn.Module):
         image = torch.clamp(image, min = 0, max = 1)
         return image
     
-    def exposure_shift(self, before_exposure, predicted_exposure, alpha = 0.5):
+    def exposure_shift(self, before_exposure, predicted_exposure, alpha = 0.3):
         difference = predicted_exposure - before_exposure
         adjusted_difference = alpha * difference
         shifted_exposure = before_exposure + adjusted_difference
@@ -141,42 +142,51 @@ class CombineModel(nn.Module):
     
     
         
-    def forward(self, left_hdr_image, right_hdr_image, iters=12, flow_init=None, test_mode=False):
-        # ToDo 중간 결과 이미지 출력 확인
-        # todo) left_hdr_image, left_ldr_image, output_l 확인 완
+    def forward(self, left_hdr, right_hdr, iters=12, flow_init=None, test_mode=False):
 
         #* Simulator Module HDR -> LDR
-        left_ldr_image, right_ldr_image, exp_rand_l, exp_rand_r  = self.simulator_before_saec(left_hdr_image, right_hdr_image)
+        # exp_rand_l, exp_rand_r = generate_random_exposure()
+        e_rand_l, e_rand_r = 0.5, 1.5
+        phi_l = ImageFormation(left_hdr, e_rand_l, device=DEVICE)
+        phi_r = ImageFormation(right_hdr, e_rand_r, device=DEVICE)
         
-        stacked_histo_tensor_l, stacked_histo_tensor_r = self.calculate_histograms(left_ldr_image, right_ldr_image)
+        left_ldr_cap = phi_l.noise_modeling()
+        right_ldr_cap = phi_r.noise_modeling()
+        
+        stacked_histo_tensor_l, stacked_histo_tensor_r = self.calculate_histograms(left_ldr_cap, right_ldr_cap)
         
         #* Global FeatureNetwork    
-        output_l = self.GlobalFeatureNet(stacked_histo_tensor_l.T)
-        output_r = self.GlobalFeatureNet(stacked_histo_tensor_r.T)
+        e_exp_l = self.GlobalFeatureNet(stacked_histo_tensor_l.T)
+        e_exp_r = self.GlobalFeatureNet(stacked_histo_tensor_r.T)
         
         # ! Tensor with 2 elements cannot be converted to Scalar
         # ! output_l, output_r shape [batch_size, estimated value]
   
-        shifted_exp_l = self.exposure_shift(exp_rand_l, output_l.mean().item())
-        shifted_exp_r = self.exposure_shift(exp_rand_r, output_r.mean().item())
+        e_shifted_l = self.exposure_shift(e_rand_l, e_exp_l.mean().item())
+        e_shifted_r = self.exposure_shift(e_rand_r, e_exp_r.mean().item())
         
         # * Check Exposure values
         print("====Random exp values====")
-        print(f"Random exp_l : {exp_rand_l}, Random exp_r : {exp_rand_r}")
+        print(f"Random exp_l : {e_rand_l}, Random exp_r : {e_rand_r}")
         print("====before shifted exp values====")
-        print(f"output_exp_l : {output_l.mean().item()}, output_exp_r : {output_r.mean().item()}")
+        print(f"output_exp_l : {e_exp_l.mean().item()}, output_exp_r : {e_exp_r.mean().item()}")
         print("====shifted exp values====")
-        print(f"shifted_exp_l : {shifted_exp_l}, shifted_exp_r : {shifted_exp_r}")
+        print(f"shifted_exp_l : {e_shifted_l}, shifted_exp_r : {e_shifted_r}")
         
         # * Simulate Image LDR with shifted exposure value
-        sim_left_ldr_image, sim_right_ldr_image, sim_left_before_norm, sim_right_before_norm = self.simulator_after_saec(left_ldr_image, right_ldr_image, left_hdr_image, right_hdr_image, shifted_exp_l, shifted_exp_r)
         
-        # ! If input images are batch
-        # _, flow_up = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image)
-   
-        flow_predictions = self.RAFTStereo(sim_left_ldr_image, sim_right_ldr_image, iters = 12) # list, list[0]= [B, 1, H, W]
+        phi_hat_l = ImageFormation(left_hdr, e_shifted_l, device=DEVICE)
+        phi_hat_r = ImageFormation(right_hdr, e_shifted_r, device=DEVICE)
         
-        return flow_predictions, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, {'output_l': output_l, 'output_r':output_r, 'shifted_exp_l':shifted_exp_l, 'shifted_exp_r':shifted_exp_r}, sim_left_before_norm, sim_right_before_norm
-
+        left_ldr_adj = phi_hat_l.noise_modeling()
+        right_ldr_adj = phi_hat_r.noise_modeling()
+        
+        left_ldr_adj_denom = phi_hat_l.denormalized_image(left_ldr_adj, e_shifted_l)
+        right_ldr_adj_denom = phi_hat_r.denormalized_image(right_ldr_adj, e_shifted_r)
+        
+        flow_predictions = self.RAFTStereo(left_ldr_adj_denom, right_ldr_adj_denom, iters = 12) # list, list[0]= [B, 1, H, W]
+        
+        exposure_dict = {'e_exp_l': e_exp_l, 'e_exp_r':e_exp_r, 'e_shifted_l': e_shifted_l, 'shifted_exp_r': e_shifted_r}
+        return flow_predictions, left_ldr_cap, right_ldr_cap, left_ldr_adj_denom, right_ldr_adj_denom, exposure_dict , left_ldr_adj, right_ldr_adj
 
     
