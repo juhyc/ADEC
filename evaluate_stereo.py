@@ -11,6 +11,7 @@ from tqdm import tqdm
 from core.raft_stereo import RAFTStereo, autocast
 import core.stereo_datasets as datasets
 from core.utils.utils import InputPadder
+from core.utils.simulate import *
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -109,20 +110,8 @@ def validate_kitti(model, iters=32, mixed_prec=False):
         with autocast(enabled=mixed_prec):
             start = time.time()
             # 수정
-            flow_pr, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp, sim_left_before_norm, sim_right_before_norm = model(image1, image2, iters=iters, test_mode=True)
+            flow_pr, left_ldr_cap, right_ldr_cap, left_ldr_adj_denom, right_ldr_adj_denom, exposure_dict, left_ldr_adj, right_ldr_adj = model(image1, image2, iters=iters, test_mode=True)
             end = time.time()
-        # 수정, valid loss 계산
-        # print(f"flow_pr.shpae : {flow_pr[-1].shape}")
-        # print(f"image1.shape : {image1.shape}")
-        # print(f"flow_gt.shape : {flow_gt.shape}")
-        # print(f"valid_gt.shape : {valid_gt.shape}")
-        
-        
-        # print("validation 에서 flow_predction 하나의 크기")
-        # print(flow_pr[-1].shape)
-        
-        # valid_loss = sequence_loss_valid(flow_pr, flow_gt, valid_gt)
-        # print(f"이건 valid loss : {valid_loss}")
         
         # 수정
         flow_pr = flow_pr[-1]
@@ -156,7 +145,7 @@ def validate_kitti(model, iters=32, mixed_prec=False):
     avg_runtime = np.mean(elapsed_list)
 
     print(f"Validation KITTI: EPE {epe}, D1 {d1}, {format(1/avg_runtime, '.2f')}-FPS ({format(avg_runtime, '.3f')}s)")
-    return {'kitti-epe-Valid': epe, 'kitti-d1-Valid': d1}, -flow_pr, -flow_gt, sim_left_ldr_image, sim_right_ldr_image, left_ldr_image, right_ldr_image, output_exp, sim_left_before_norm, sim_right_before_norm
+    return {'kitti-epe-Valid': epe, 'kitti-d1-Valid': d1}, -flow_pr, -flow_gt, left_ldr_cap, right_ldr_cap, left_ldr_adj_denom, right_ldr_adj_denom, exposure_dict, left_ldr_adj, right_ldr_adj
 
 
 @torch.no_grad()

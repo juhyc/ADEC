@@ -17,6 +17,7 @@ from core.utils.utils import InputPadder
 from evaluate_stereo import *
 import core.stereo_datasets as datasets
 import matplotlib.pyplot as plt
+from PIL import Image
 
 try:
     from torch.cuda.amp import GradScaler
@@ -320,6 +321,22 @@ def train(args):
                 logger.writer.add_image("F'_Before normalized right LDR image(Valid)", check_ldr_image(right_ldr_adj_valid), valid_num)
                 logger.writer.add_image('G_Adjusted left LDR image(Valid)', check_ldr_image(left_ldr_adj_denom_valid), valid_num)
                 logger.writer.add_image('G_Adjusted right LDR image(Valid)', check_ldr_image(right_ldr_adj_denom_valid), valid_num)
+                
+                # print("Save valid disparity numpy file")
+                # np.save(f'/home/juhyung/SAEC/demo_output/valid_{valid_num}.npy', flow_valid)
+                print("===Save LDR image to PNG file===")
+                print(left_ldr_adj_valid.shape)
+                left_ldr_np = left_ldr_adj_valid.squeeze().permute(1,2,0).cpu().numpy()
+                right_ldr_np = right_ldr_adj_valid.squeeze().permute(1,2,0).cpu().numpy()
+                left_ldr = Image.fromarray((left_ldr_np*255).astype(np.uint8))
+                right_ldr = Image.fromarray((right_ldr_np*255).astype(np.uint8))
+                left_ldr.save(f"/home/juhyung/SAEC/demo_output/left_ldr_{int(valid_num)}.png")
+                right_ldr.save(f"/home/juhyung/SAEC/demo_output/right_ldr_{int(valid_num)}.png")
+                print("===Complete save LDR image pairs===")
+                print("===Save Valid disparity to numpy file===")
+                np.save(f'/home/juhyung/SAEC/demo_output/valid_{int(valid_num)}.npy', flow_valid)
+                print("===Complete save Valid disparity ===")
+                
 
                 model.train()
                 model.module.RAFTStereo.freeze_bn() # 수정
