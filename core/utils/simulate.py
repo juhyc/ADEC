@@ -4,11 +4,9 @@ from PIL import Image
 import random
 from torchvision.transforms import ToTensor
 
-
-
 M_exp = 4
 
-# &  Adjust input HDR image to LDR image using scaling factor and a,b
+# ^  Adjust input HDR image to LDR image using scaling factor and a,b
 def adjust_dr(image, s, select_range = (0,1)):
     """adjust dynamic range HDR -> LDR simulation
 
@@ -38,7 +36,7 @@ def adjust_dr(image, s, select_range = (0,1)):
 
     return image
 
-# & Poisson_gaussian noise modeling with ISO value
+# ^ Poisson_gaussian noise modeling with ISO value
 def poisson_gauss_noise(img, gauss_var=float(1e-6), poisson_scale=float(3.4e-4), iso=float(100.), clip=True):
     """
     Args:
@@ -51,7 +49,6 @@ def poisson_gauss_noise(img, gauss_var=float(1e-6), poisson_scale=float(3.4e-4),
     Returns:
         torch.Tensor: An image with Poisson Gauss noise model.
     """
-    
     # Ensure the input image is a tensor
     if not torch.is_tensor(img):
         raise ValueError("Input image should be a PyTorch Tensor.")
@@ -75,8 +72,7 @@ def poisson_gauss_noise(img, gauss_var=float(1e-6), poisson_scale=float(3.4e-4),
         
     return im
 
-
-# & Denormalize image to input stereo network
+# ^ Denormalize image to input stereo network
 def denormalized_image(image, s, select_range=(0,1)):
     """denormalize image to input to depth estimation model
 
@@ -98,11 +94,10 @@ def denormalized_image(image, s, select_range=(0,1)):
     
     image_denormalized = (b-a) * image + a
     image_denormalized = image_denormalized / s
-
-    
+ 
     return image_denormalized/255.0
 
-# & Calculation dynamic range [a,b] based on exposure factor
+# ^ Calculation dynamic range [a,b] based on exposure factor
 def cal_dynamic_range(image_tensor, exp):
     
     if not torch.is_tensor(image_tensor):
@@ -119,13 +114,14 @@ def cal_dynamic_range(image_tensor, exp):
     
     return a,b
 
-# & Generate random exposure factor 
+# ^ Generate random exposure factor 
 def generate_random_exposure():
     value1 = random.uniform(M_exp**(-1), M_exp)
     value2 = random.uniform(M_exp**(-1), M_exp)
         
     return value1, value2
 
+# ^ Image Simulation class (noise modeling, adjust dynamic range)
 class ImageFormation:
     def __init__(self, image, exp, device = 'cpu'):
         """Initialize image formation model.
@@ -150,9 +146,11 @@ class ImageFormation:
             self.original_phi = (image/255.0).to(self.device)
             
         self.phi = self.original_phi.clone()
+        
         # Max shutter speed 15m/s
         self.T_max = 1.5
         self.exp = exp
+        
         # Camera gain and shutter speed
         self.g = max(1.0, self.exp/self.T_max)
         self.t = self.exp/self.g
@@ -175,8 +173,6 @@ class ImageFormation:
         b = mean_intensity + exp * std_intensity
         
         return a,b
-    
-    
     
     def adjust_dr(self, exp):
                     

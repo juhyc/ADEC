@@ -35,6 +35,8 @@ except:
         def update(self):
             pass
 
+# ^ CombineModle(SAEC + RAFT) trainging code.
+
 # ^ Raft sequence loss
 def sequence_loss(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700):
     """ Loss function defined over sequence of flow predictions """
