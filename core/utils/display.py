@@ -37,6 +37,8 @@ def visualize_mask(batch_image):
 # * Visualization flow_prediction during Training
 def visualize_flow_cmap(batch_image):
     
+    # For visualization multiply -1 to batch_image
+    
     image_tensor = -batch_image[0].clone().detach()
     
     image = image_tensor.cpu().numpy().squeeze()

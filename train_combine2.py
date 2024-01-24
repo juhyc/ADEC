@@ -115,9 +115,9 @@ def train(args):
 
             # ^ visualize during training
 
-            writer.add_image('disparity1', visualize_flow_cmap(disparity1), global_batch_num)
-            writer.add_image('disparity2', visualize_flow_cmap(disparity2), global_batch_num)
-            writer.add_image('Disparity_prediction', visualize_flow_cmap(fused_disparity), global_batch_num)
+            writer.add_image('Train/Fused_disparity', visualize_flow_cmap(fused_disparity), global_batch_num)
+            writer.add_image('Train/disparity1', visualize_flow_cmap(disparity1), global_batch_num)
+            writer.add_image('Train/disparity2', visualize_flow_cmap(disparity2), global_batch_num)
 
             assert model.training
 
@@ -125,57 +125,32 @@ def train(args):
             valid_mask = valid_mask.unsqueeze(1)
             loss = criterion(fused_disparity[valid_mask], disparity[valid_mask])
             
-            writer.add_scalar("live_loss", loss.item(), global_batch_num)
-            writer.add_scalar(f'learning_rate', optimizer.param_groups[0]['lr'], global_batch_num)
+            writer.add_scalar("Training_loss", loss.item(), global_batch_num)
+            # writer.add_scalar(f'learning_rate', optimizer.param_groups[0]['lr'], global_batch_num)
             global_batch_num += 1
             
             loss.backward()
             optimizer.step()
             
             # # Todo) Validation code 수정
-            # if total_steps % validation_frequency == validation_frequency - 1:
-            #     print("====Validation====")
-            #     valid_num = (total_steps / validation_frequency) * 10 + 1
-            #     save_path = Path('checkpoints/%d_%s.pth' % (total_steps + 1, args.name))
-            #     logging.info(f"Saving file {save_path.absolute()}")
-            #     torch.save(model.state_dict(), save_path)
+            if total_steps % validation_frequency == validation_frequency - 1:
+                print("=====Validation=====")
+                valid_num = (total_steps / validation_frequency) * 10 + 1
+                save_path = Path('checkpoints/%d_%s.pth' % (total_steps + 1, args.name))
+                logging.info(f"Saving file {save_path.absolute()}")
+                torch.save(model.state_dict(), save_path)
 
-            #     results, flow_valid, flow_valid_gt, left_ldr_cap_valid, right_ldr_cap_valid, left_ldr_adj_denom_valid, right_ldr_adj_denom_valid, exposure_dict_valid, left_ldr_adj_valid, right_ldr_adj_valid = validate_kitti(model.module, iters=args.valid_iters)
+                valid_loss, valid_fused_disparity, valid_disparity1, valid_disparity2 = validate_kitti2(model.module, iters=args.valid_iters)
                 
-            #     # valid output_exp 확인용
-            #     output_exp_valid = {"Valid " + key : value for key, value in exposure_dict_valid.items()}
+                model.train()
+                model.module.RAFTStereo.freeze_bn() # 수정
                 
-            #     logger.write_dict(results)
-            #     logger.write_dict(output_exp_valid)
-            #     logger.writer.add_image('E_Disparity gt(Valid)', visualize_flow_cmap(flow_valid_gt, image1), valid_num)
-            #     logger.writer.add_image('E_Disparity prediction_c(Valid)', visualize_flow_cmap(flow_valid, image1), valid_num)
-            #     logger.writer.add_image('F_Captured left LDR image(Valid)', check_ldr_image(left_ldr_cap_valid), valid_num)
-            #     logger.writer.add_image('F_Captured right LDR image(Valid)', check_ldr_image(right_ldr_cap_valid), valid_num)
-            #     logger.writer.add_image("F'_Before normalized left LDR image(Valid)", check_ldr_image(left_ldr_adj_valid), valid_num)
-            #     logger.writer.add_image("F'_Before normalized right LDR image(Valid)", check_ldr_image(right_ldr_adj_valid), valid_num)
-            #     logger.writer.add_image('G_Adjusted left LDR image(Valid)', check_ldr_image(left_ldr_adj_denom_valid), valid_num)
-            #     logger.writer.add_image('G_Adjusted right LDR image(Valid)', check_ldr_image(right_ldr_adj_denom_valid), valid_num)
-                
-            #     # print("Save valid disparity numpy file")
-            #     # np.save(f'/home/juhyung/SAEC/demo_output/valid_{valid_num}.npy', flow_valid)
-            #     print("===Save LDR image to PNG file===")
-            #     print(left_ldr_adj_valid.shape)
-            #     left_ldr_np = left_ldr_adj_valid.squeeze().permute(1,2,0).cpu().numpy()
-            #     right_ldr_np = right_ldr_adj_valid.squeeze().permute(1,2,0).cpu().numpy()
-            #     left_ldr = Image.fromarray((left_ldr_np*255).astype(np.uint8))
-            #     right_ldr = Image.fromarray((right_ldr_np*255).astype(np.uint8))
-            #     left_ldr.save(f"/home/juhyung/SAEC/demo_output/left_ldr_{int(valid_num)}.png")
-            #     right_ldr.save(f"/home/juhyung/SAEC/demo_output/right_ldr_{int(valid_num)}.png")
-            #     print("===Complete save LDR image pairs===")
-            #     print("===Save Valid disparity to numpy file===")
-            #     np.save(f'/home/juhyung/SAEC/demo_output/valid_{int(valid_num)}.npy', flow_valid)
-            #     print("===Complete save Valid disparity ===")
-                
+                writer.add_image('Valid/Fused_disparity', visualize_flow_cmap(valid_fused_disparity), valid_num)
+                writer.add_image('Valid/disparity1', visualize_flow_cmap(valid_disparity1), valid_num)
+                writer.add_image('Valid/disparity2', visualize_flow_cmap(valid_disparity2), valid_num)
+                writer.add_scalar('Valid_loss', valid_loss.item(), valid_num)
 
-            #     model.train()
-            #     model.module.RAFTStereo.freeze_bn() # 수정
-
-            # total_steps += 1
+            total_steps += 1
 
             if total_steps > args.num_steps:
                 should_keep_training = False
