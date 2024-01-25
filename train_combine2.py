@@ -87,6 +87,11 @@ def train(args):
                 combined_state_dict[combined_keys] = new_raft_state_dict[k] 
                 count += 1
         
+        # Check 가중치 개수
+        print("Check weight length")
+        print(len(raft_checkpoint), len(new_raft_state_dict))
+        print(len(combined_state_dict))
+        
         model.load_state_dict(combined_state_dict)
                 
         logging.info(f"Done loading checkpoint")
@@ -111,13 +116,18 @@ def train(args):
             left_hdr, right_hdr, disparity, valid = [x.cuda() for x in data_blob]
 
             assert model.training
-            fused_disparity, disparity1, disparity2 = model(left_hdr, right_hdr, iters=args.train_iters ) 
+            fused_disparity, disparity1, disparity2, captured_img_list = model(left_hdr, right_hdr, iters=args.train_iters ) 
 
             # ^ visualize during training
 
             writer.add_image('Train/Fused_disparity', visualize_flow_cmap(fused_disparity), global_batch_num)
             writer.add_image('Train/disparity1', visualize_flow_cmap(disparity1), global_batch_num)
             writer.add_image('Train/disparity2', visualize_flow_cmap(disparity2), global_batch_num)
+            
+            writer.add_image('Captured(T)/img1_left', check_ldr_image(captured_img_list[0]), global_batch_num)
+            writer.add_image('Captured(T)/img1_right', check_ldr_image(captured_img_list[1]), global_batch_num)
+            writer.add_image('Captured(T)/img2_left', check_ldr_image(captured_img_list[2]), global_batch_num)
+            writer.add_image('Captured(T)/img2_right', check_ldr_image(captured_img_list[3]), global_batch_num)
 
             assert model.training
 
@@ -127,8 +137,7 @@ def train(args):
             
             writer.add_scalar("Training_loss", loss.item(), global_batch_num)
             # writer.add_scalar(f'learning_rate', optimizer.param_groups[0]['lr'], global_batch_num)
-            global_batch_num += 1
-            
+            global_batch_num += 1            
             loss.backward()
             optimizer.step()
             
@@ -140,7 +149,7 @@ def train(args):
                 logging.info(f"Saving file {save_path.absolute()}")
                 torch.save(model.state_dict(), save_path)
 
-                valid_loss, valid_fused_disparity, valid_disparity1, valid_disparity2 = validate_kitti2(model.module, iters=args.valid_iters)
+                valid_loss, valid_fused_disparity, valid_disparity1, valid_disparity2, valid_captured_img_list = validate_kitti2(model.module, iters=args.valid_iters)
                 
                 model.train()
                 model.module.RAFTStereo.freeze_bn() # 수정
@@ -149,6 +158,11 @@ def train(args):
                 writer.add_image('Valid/disparity1', visualize_flow_cmap(valid_disparity1), valid_num)
                 writer.add_image('Valid/disparity2', visualize_flow_cmap(valid_disparity2), valid_num)
                 writer.add_scalar('Valid_loss', valid_loss.item(), valid_num)
+                
+                writer.add_image('Captured(V)/img1_left', check_ldr_image(valid_captured_img_list[0]), global_batch_num)
+                writer.add_image('Captured(V)/img1_right', check_ldr_image(valid_captured_img_list[1]), global_batch_num)
+                writer.add_image('Captured(V)/img2_left', check_ldr_image(valid_captured_img_list[2]), global_batch_num)
+                writer.add_image('Captured(V)/img2_right', check_ldr_image(valid_captured_img_list[3]), global_batch_num)
 
             total_steps += 1
 

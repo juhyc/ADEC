@@ -170,7 +170,7 @@ def validate_kitti2(model, iters=32, mixed_prec=False):
         with autocast(enabled=mixed_prec):
             start = time.time()
             # 수정
-            fused_disparity, disparity1, disparity2 = model(image1, image2, iters = iters)
+            fused_disparity, disparity1, disparity2, captured_img_list = model(image1, image2, iters = iters)
             end = time.time()
         
         fused_disparity = padder.unpad(fused_disparity).cpu().squeeze(0)
@@ -181,7 +181,7 @@ def validate_kitti2(model, iters=32, mixed_prec=False):
         
         print(f"Validation loss : {loss}")
           
-    return loss, fused_disparity, disparity1, disparity2
+    return loss, fused_disparity, disparity1, disparity2, captured_img_list
 
 
 @torch.no_grad()

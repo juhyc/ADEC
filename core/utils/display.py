@@ -84,3 +84,31 @@ def visualize_mask(mask):
     mask_image = np.transpose(mask_image, (2,0,1))
     
     return mask_image
+
+def check_hdr_image(image):
+    print(type(image))
+    print(image.shape)
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[0].cpu().permute(1,2,0)
+        temp = temp.numpy().astype(np.uint8)
+    plt.imshow(temp)
+    plt.show()
+
+def check_ldr_image(image):
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[0].cpu().permute(1,2,0)
+        temp = torch.clamp(temp*255, 0, 255)
+        temp = temp.numpy().astype(np.uint8)
+    plt.imshow(temp)
+    plt.show()
+    
+def check_ldr_image2(image):
+    if isinstance(image, torch.Tensor):
+        temp = image.clone().detach()
+        temp = temp[1].cpu().permute(1,2,0)
+        temp = torch.clamp(temp*255, 0, 255)
+        temp = temp.numpy().astype(np.uint8)
+    plt.imshow(temp)
+    plt.show()
