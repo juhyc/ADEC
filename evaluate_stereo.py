@@ -12,6 +12,7 @@ from core.raft_stereo import RAFTStereo, autocast
 import core.stereo_datasets as datasets
 from core.utils.utils import InputPadder
 from core.utils.simulate import *
+from core.loss import *
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -147,6 +148,42 @@ def validate_kitti(model, iters=32, mixed_prec=False):
     print(f"Validation KITTI: EPE {epe}, D1 {d1}, {format(1/avg_runtime, '.2f')}-FPS ({format(avg_runtime, '.3f')}s)")
     return {'kitti-epe-Valid': epe, 'kitti-d1-Valid': d1}, -flow_pr, -flow_gt, left_ldr_cap, right_ldr_cap, left_ldr_adj_denom, right_ldr_adj_denom, exposure_dict, left_ldr_adj, right_ldr_adj
 
+@torch.no_grad()
+def validate_kitti2(model, iters=32, mixed_prec=False):
+    """ Peform validation using the KITTI-2015 (train) split """
+    model.eval()
+    aug_params = {}
+    val_dataset = datasets.KITTI(aug_params, image_set='validate')
+    torch.backends.cudnn.benchmark = True
+    criterion = nn.SmoothL1Loss().cuda()
+    # criterion = BerHuLoss().cuda()
+    
+    for val_id in range(len(val_dataset)):
+        _, image1, image2, flow_gt, valid_gt = val_dataset[val_id]
+        image1 = image1[None].cuda()
+        image2 = image2[None].cuda()
+
+
+        padder = InputPadder(image1.shape, divis_by=32)
+        image1, image2 = padder.pad(image1, image2)
+
+        # ! 수정, validation visualtion, model이 raft가 아닌 Combine model 형태로 반환값이 다름.
+        with autocast(enabled=mixed_prec):
+            start = time.time()
+            # 수정
+            fused_disparity, disparity1, disparity2, captured_rand_img_list, captured_img_list = model(image1, image2, iters = iters)
+            end = time.time()
+        
+        fused_disparity = padder.unpad(fused_disparity).cpu().squeeze(0)
+        valid_mask = (valid_gt >=0.5)
+        valid_mask = valid_mask.unsqueeze(0)  
+
+        loss = criterion(fused_disparity[valid_mask], flow_gt[valid_mask])
+        
+        print(f"Validation loss : {loss}")
+          
+    return loss, fused_disparity, disparity1, disparity2, captured_rand_img_list, captured_img_list
+
 
 @torch.no_grad()
 def validate_things(model, iters=32, mixed_prec=False):
@@ -281,3 +318,5 @@ if __name__ == '__main__':
 
     elif args.dataset == 'things':
         validate_things(model, iters=args.valid_iters, mixed_prec=use_mixed_precision)
+
+

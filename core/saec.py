@@ -53,8 +53,6 @@ def histogram_subimage(image, grid_size):
 
 def stack_histogram(list_of_histogram):
     
-    assert len(list_of_histogram) == 3, "len(list_of_histogram) != 3"
-    
     # Transpose the structure to: [[histogram_image1_from_batch1, histogram_image1_from_batch2, histogram_image1_from_batch3], ...]
     transposed_list = list(zip(*list_of_histogram))
 
@@ -90,6 +88,25 @@ def calculate_histograms(left_ldr_image, right_ldr_image):
     
     return stacked_histo_tensor_l, stacked_histo_tensor_r
 
+def calculate_histograms2(left_ldr_image, right_ldr_image):
+    
+    #^ Calculate histogram with multi scale
+    histogram_coarest_l = histogram_subimage(left_ldr_image, 1)
+    histogram_intermediate_l = histogram_subimage(left_ldr_image, 3)
+    histogram_finest_l = histogram_subimage(left_ldr_image,7)
+    
+    histogram_coarest_r = histogram_subimage(right_ldr_image, 1)
+    histogram_intermediate_r = histogram_subimage(right_ldr_image, 3)
+    histogram_finest_r = histogram_subimage(right_ldr_image, 7)
+    
+    #^ Stack histogram [256,118]
+    list_of_histograms = [histogram_coarest_l, histogram_intermediate_l, histogram_finest_l,
+                            histogram_coarest_r, histogram_intermediate_r, histogram_finest_r]
+    
+    stacked_histo_tensor = stack_histogram(list_of_histograms)
+    
+    return stacked_histo_tensor
+
 
 # & Show historgram by different grid_size
 def show_histogram(histograms, grid_size):
@@ -114,7 +131,8 @@ class GlobalFeatureNet(nn.Module):
         super(GlobalFeatureNet, self).__init__()
 
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(59, 128, kernel_size=4, stride=4),  # Make sure the input channel is 59
+            # Make sure the input channel is 59, or adjust
+            nn.Conv1d(118, 128, kernel_size=4, stride=4),  
             nn.ReLU(),
             nn.Conv1d(128, 256, kernel_size=4, stride=4),
             nn.ReLU(),
@@ -123,11 +141,11 @@ class GlobalFeatureNet(nn.Module):
         )
 
         self.fc_layers = nn.Sequential(
-            nn.Linear(2048, 1024),  # Adjust this if needed
+            nn.Linear(2048, 512),  # Adjust this if needed
             nn.ReLU(),
-            nn.Linear(1024, 256),
+            nn.Linear(512, 128),
             nn.ReLU(),
-            nn.Linear(256, 16),
+            nn.Linear(128, 16),
             nn.ReLU(),
             nn.Linear(16, 1),
         )
@@ -135,25 +153,42 @@ class GlobalFeatureNet(nn.Module):
         self.M_exp = M_exp
         self.M_exp_log = torch.log(torch.tensor([self.M_exp], dtype=torch.float))
 
-    def forward(self, x):
-        # ! check batch size
-        # Permute the dimensions to [batch, channel, histogram]
-        x = x.permute(2, 0, 1)
+    # def forward(self, x):
+    #     # ! check batch size
+    #     # Permute the dimensions to [batch, channel, histogram]
+    #     x = x.permute(2, 0, 1)
 
+    #     x = self.conv_layers(x)
+    #     x = x.view(x.size(0), -1)
+    #     x = self.fc_layers(x)
+
+    #     u_t= (2 * torch.sigmoid(x) - 0.5) * self.M_exp_log.to(x.device)
+    #     # u_t = torch.exp(2 * torch.sigmoid(x) - 0.5) * self.M_exp_log.to(x.device)
+    #     return u_t
+    def forward(self, x):
+        x = x.permute(2, 0, 1)
+        
         x = self.conv_layers(x)
         x = x.view(x.size(0), -1)
         x = self.fc_layers(x)
-
-        u_t = torch.exp(2 * torch.sigmoid(x) - 0.5) * self.M_exp_log.to(x.device)
-        return u_t
-
-
+        exp_t = (2 * torch.sigmoid(x) - 0.5) * self.M_exp_log.to(x.device)
+        
+        return exp_t
 
 
-def exposure_shift(before_exposure, predicted_exposure, smoothing = 0.9):
-    shifted_exposure = before_exposure * predicted_exposure**(1-smoothing)
-    
+def exposure_shift(before_exposure, predicted_exposure, alpha = 0.2):
+    difference = predicted_exposure - before_exposure
+    adjusted_difference = alpha * difference
+    shifted_exposure = before_exposure + adjusted_difference
+
     return shifted_exposure
+
+
+
+# def exposure_shift(before_exposure, predicted_exposure, smoothing = 0.9):
+#     shifted_exposure = before_exposure * predicted_exposure**(1-smoothing)
+    
+#     return shifted_exposure
 
 def exposure_shift_by_threshold(before_exposure, predicted_exposure, smoothing = 0.9, threshold = 1):
     if before_exposure < threshold:

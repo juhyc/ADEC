@@ -256,9 +256,9 @@ class KITTI(StereoDataset):
             disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
         else:
             image_set = 'training'
-            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/000000_10.png')))
-            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/000000_10.png')))
-            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/000000_10.png')))
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/000016_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/000016_10.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/000016_10.png')))
             
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
             self.image_list += [ [img1, img2] ]

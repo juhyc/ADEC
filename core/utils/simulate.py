@@ -4,11 +4,9 @@ from PIL import Image
 import random
 from torchvision.transforms import ToTensor
 
-
-
 M_exp = 4
 
-# &  Adjust input HDR image to LDR image using scaling factor and a,b
+# ^  Adjust input HDR image to LDR image using scaling factor and a,b
 def adjust_dr(image, s, select_range = (0,1)):
     """adjust dynamic range HDR -> LDR simulation
 
@@ -38,7 +36,7 @@ def adjust_dr(image, s, select_range = (0,1)):
 
     return image
 
-# & Poisson_gaussian noise modeling with ISO value
+# ^ Poisson_gaussian noise modeling with ISO value
 def poisson_gauss_noise(img, gauss_var=float(1e-6), poisson_scale=float(3.4e-4), iso=float(100.), clip=True):
     """
     Args:
@@ -51,7 +49,6 @@ def poisson_gauss_noise(img, gauss_var=float(1e-6), poisson_scale=float(3.4e-4),
     Returns:
         torch.Tensor: An image with Poisson Gauss noise model.
     """
-    
     # Ensure the input image is a tensor
     if not torch.is_tensor(img):
         raise ValueError("Input image should be a PyTorch Tensor.")
@@ -75,8 +72,7 @@ def poisson_gauss_noise(img, gauss_var=float(1e-6), poisson_scale=float(3.4e-4),
         
     return im
 
-
-# & Denormalize image to input stereo network
+# ^ Denormalize image to input stereo network
 def denormalized_image(image, s, select_range=(0,1)):
     """denormalize image to input to depth estimation model
 
@@ -98,11 +94,10 @@ def denormalized_image(image, s, select_range=(0,1)):
     
     image_denormalized = (b-a) * image + a
     image_denormalized = image_denormalized / s
-
-    
+ 
     return image_denormalized/255.0
 
-# & Calculation dynamic range [a,b] based on exposure factor
+# ^ Calculation dynamic range [a,b] based on exposure factor
 def cal_dynamic_range(image_tensor, exp):
     
     if not torch.is_tensor(image_tensor):
@@ -119,13 +114,16 @@ def cal_dynamic_range(image_tensor, exp):
     
     return a,b
 
-# & Generate random exposure factor 
-def generate_random_exposure():
-    value1 = random.uniform(M_exp**(-1), M_exp)
-    value2 = random.uniform(M_exp**(-1), M_exp)
+# ^ Generate random exposure factor 
+def generate_random_exposures(batch_size):
+    values1 = []
+    for _ in range(batch_size):
+        value1 = random.uniform(M_exp**(-1), M_exp)
+        values1.append([value1])
         
-    return value1, value2
+    return torch.tensor(values1)
 
+# ^ Image Simulation class (noise modeling, adjust dynamic range)
 class ImageFormation:
     def __init__(self, image, exp, device = 'cpu'):
         """Initialize image formation model.
@@ -136,25 +134,23 @@ class ImageFormation:
             image (Image): HDR image
             exp : exposure
         """
-        if exp <= 0:
+        if torch.any(exp <= 0):
             raise ValueError("'exp' should be a positive value.")
         
-        to_tensor = ToTensor()
         self.device = torch.device(device)
         self.gauss_var = float(1e-6)
         self.poisson_scale = float(3.4e-4)
+        
         # HDR scene
-        if isinstance(image, Image.Image):
-            self.original_phi = to_tensor(image).to(self.device)
-        else:
-            self.original_phi = (image/255.0).to(self.device)
-            
+        self.original_phi = image.to(self.device)/255.0
         self.phi = self.original_phi.clone()
+        self.exp = exp.to(self.device)
+        
         # Max shutter speed 15m/s
         self.T_max = 1.5
-        self.exp = exp
-        # Camera gain and shutter speed
-        self.g = max(1.0, self.exp/self.T_max)
+        
+        # Camera gain and shutter speed for each image in the batch
+        self.g = torch.max(torch.ones_like(self.exp), self.exp/self.T_max)
         self.t = self.exp/self.g
     
     def cal_dynamic_range(self, img, exp):
@@ -167,25 +163,22 @@ class ImageFormation:
         Returns:
             a,b : caculated dynamic range
         """
+        mean_intensity = torch.mean(img, dim=[1,2,3], keepdim=True)
+        std_intensity = torch.std(img, dim=[1,2,3], keepdim=True)
         
-        mean_intensity = torch.mean(img)
-        std_intensity = torch.std(img)
-        
-        a = mean_intensity - exp * std_intensity
-        b = mean_intensity + exp * std_intensity
+        a = mean_intensity - exp.view(-1,1,1,1) * std_intensity
+        b = mean_intensity + exp.view(-1,1,1,1) * std_intensity
         
         return a,b
     
-    
-    
-    def adjust_dr(self, exp):
+    def adjust_dr(self, img, exp):
                     
         # if not torch.is_tensor(exp):
         #     exp = torch.tensor(exp).to(img.device)
         
-        a,b = self.cal_dynamic_range(exp)
+        a,b = self.cal_dynamic_range(img, exp)
         
-        img = (exp * self.phi - a) / (b - a)
+        img = (exp * img - a) / (b - a)
         
         img = torch.clamp(img, 0, 1)
         
@@ -211,17 +204,21 @@ class ImageFormation:
         if iso <= 0:
             raise ValueError("ISO value should be positive.")
         
-        phi = self.phi * self.t * (iso/100.0)
+        iso_scale = iso / 100.0
+        t_expanded = self.t.view(-1, 1, 1, 1)
+        phi_scaled = self.phi * t_expanded * iso_scale
         
         gauss_std = torch.sqrt(torch.tensor(self.gauss_var)).to(self.device) * (iso/100.0)
         poisson_scale = torch.tensor(self.poisson_scale).to(self.device) * (iso/100.0)
         
+        g_expanded = self.g.view(-1, 1, 1, 1)
+        
         # Shot noise
-        shot_noise = torch.poisson(phi/poisson_scale) * poisson_scale * self.g
+        shot_noise = torch.poisson(phi_scaled/poisson_scale) * poisson_scale * g_expanded
         # Readout noise
-        readout_noise = self.gauss_var * torch.randn_like(phi) * self.g
+        readout_noise = gauss_std * torch.randn_like(phi_scaled) * g_expanded
         # ADC noise
-        adc_noise = self.gauss_var * torch.randn_like(phi)
+        adc_noise = gauss_std * torch.randn_like(phi_scaled)
         
         noise_hdr = shot_noise + readout_noise + adc_noise
         
@@ -229,8 +226,10 @@ class ImageFormation:
         
         # Adjust dynamic range HDR -> LDR
         a,b = self.cal_dynamic_range(noise_hdr, self.exp)
-        noise_ldr = (self.exp * noise_hdr - a) / (b - a)
+
+        e_expanded = self.exp.view(-1,1,1,1)
+        
+        noise_ldr = (e_expanded * noise_hdr - a) / (b - a)
         noise_ldr = torch.clamp(noise_ldr, 0, 1)
                 
         return noise_ldr
-    
