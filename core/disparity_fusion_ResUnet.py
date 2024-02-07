@@ -48,18 +48,18 @@ class ResUNet(nn.Module):
     """Light-weight Residual U-Net architecture."""
     def __init__(self, n_channels, n_classes):
         super(ResUNet, self).__init__()
-        self.down_conv1 = ConvBlock(n_channels, 32)
-        self.down_conv2 = ConvBlock(32, 64)
-        self.down_conv3 = ConvBlock(64, 128)
-        self.down_conv4 = ConvBlock(128, 256)
+        self.down_conv1 = ConvBlock(n_channels, 16)
+        self.down_conv2 = ConvBlock(16, 32)
+        self.down_conv3 = ConvBlock(32, 64)
+        self.down_conv4 = ConvBlock(64, 128)
         
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
         
-        self.up_conv3 = UpConvBlock(256, 128)
-        self.up_conv2 = UpConvBlock(128, 64)
-        self.up_conv1 = UpConvBlock(64, 32)
+        self.up_conv3 = UpConvBlock(128, 64)
+        self.up_conv2 = UpConvBlock(64, 32)
+        self.up_conv1 = UpConvBlock(32, 16)
 
-        self.final_conv = nn.Conv2d(32, n_classes, kernel_size=1)
+        self.final_conv = nn.Conv2d(16, n_classes, kernel_size=1)
 
     def forward(self, x):
         # Encoder path

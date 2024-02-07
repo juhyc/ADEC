@@ -47,7 +47,9 @@ writer = SummaryWriter('runs/combine_pipeline_demo')
 # CUDA
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 # ^ Train
+# ^ 기존 모듈 3개를 병합한 파이프라인 training code
 def train(args):
 
     model = torch.nn.DataParallel(CombineModel(args), device_ids=[0])
@@ -56,52 +58,56 @@ def train(args):
     
     # Todo) dataloader 수정
     train_loader = datasets.fetch_dataloader(args)
-    criterion = BerHuLoss().to(DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr = 0.0002)
+    criterion = nn.SmoothL1Loss().to(DEVICE)
+    # criterion = BerHuLoss().to(DEVICE)
+    optimizer = optim.AdamW(model.parameters(), lr = 0.0002)
     total_steps = 0
 
-    # ToDo) RAFT load_state_dict 수정
-    if args.restore_ckpt is not None:
-        assert args.restore_ckpt.endswith(".pth")
-        logging.info("Loading checkpoint...")
-        raft_checkpoint = torch.load(args.restore_ckpt)
+    # # ToDo) RAFT load_state_dict 수정
+    # if args.restore_ckpt is not None:
+    #     assert args.restore_ckpt.endswith(".pth")
+    #     logging.info("Loading checkpoint...")
+    #     raft_checkpoint = torch.load(args.restore_ckpt)
         
-        # * downsampling = 3 인 경우
-        if args.n_downsample == 3:
-            del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
+    #     # * downsampling = 3 인 경우
+    #     if args.n_downsample == 3:
+    #         del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
         
-        new_raft_state_dict = {}
-        for k, v in raft_checkpoint.items():
-            if k.startswith('module.'):
-                new_k = k[7:]
-            else:
-                new_k = k
-            new_raft_state_dict[new_k] = v
+    #     new_raft_state_dict = {}
+    #     for k, v in raft_checkpoint.items():
+    #         if k.startswith('module.'):
+    #             new_k = k[7:]
+    #         else:
+    #             new_k = k
+    #         new_raft_state_dict[new_k] = v
         
-        combined_state_dict = model.state_dict()
-        count = 0
+    #     combined_state_dict = model.state_dict()
+    #     count = 0
         
-        for k in new_raft_state_dict.keys():
-            combined_keys = "module.RAFTStereo." + k
-            if combined_keys in combined_state_dict:
-                combined_state_dict[combined_keys] = new_raft_state_dict[k] 
-                count += 1
+    #     for k in new_raft_state_dict.keys():
+    #         combined_keys = "module.RAFTStereo." + k
+    #         if combined_keys in combined_state_dict:
+    #             combined_state_dict[combined_keys] = new_raft_state_dict[k] 
+    #             count += 1
         
-        # Check 가중치 개수
-        print("Check weight length")
-        print(len(raft_checkpoint), len(new_raft_state_dict))
-        print(len(combined_state_dict))
-        
-        model.load_state_dict(combined_state_dict)
+    #     model.load_state_dict(combined_state_dict)
                 
-        logging.info(f"Done loading checkpoint")
+    #     logging.info(f"Done loading checkpoint")
+    
+    saec_checkpoint = torch.load('/home/juhyung/SAEC/checkpoints/SAEC_200_epoch.pth')
+    model.load_state_dict(saec_checkpoint)
+    logging.info(f"Done loading saec checkpoint")
     
     model.cuda()
     model.train()
     
     # RAFTStereo 의 가중치 고정
+
     for param in model.module.RAFTStereo.parameters():
         param.requires_grad = False
+    for param in model.module.DisparityFusion.parameters():
+        param.requires_grad = False
+
     
     model.module.RAFTStereo.freeze_bn() # We keep BatchNorm frozen
 
@@ -116,7 +122,7 @@ def train(args):
             left_hdr, right_hdr, disparity, valid = [x.cuda() for x in data_blob]
 
             assert model.training
-            fused_disparity, disparity1, disparity2, captured_img_list = model(left_hdr, right_hdr, iters=args.train_iters ) 
+            fused_disparity, disparity1, disparity2, captured_rand_img_list, captured_img_list = model(left_hdr, right_hdr, iters=args.train_iters ) 
 
             # ^ visualize during training
 
@@ -124,10 +130,15 @@ def train(args):
             writer.add_image('Train/disparity1', visualize_flow_cmap(disparity1), global_batch_num)
             writer.add_image('Train/disparity2', visualize_flow_cmap(disparity2), global_batch_num)
             
-            writer.add_image('Captured(T)/img1_left', check_ldr_image(captured_img_list[0]), global_batch_num)
-            writer.add_image('Captured(T)/img1_right', check_ldr_image(captured_img_list[1]), global_batch_num)
-            writer.add_image('Captured(T)/img2_left', check_ldr_image(captured_img_list[2]), global_batch_num)
-            writer.add_image('Captured(T)/img2_right', check_ldr_image(captured_img_list[3]), global_batch_num)
+            writer.add_image('Captured(T)/rand_img1_left', captured_rand_img_list[0][0], global_batch_num)
+            writer.add_image('Captured(T)/rand_img1_right', captured_rand_img_list[1][0], global_batch_num)
+            writer.add_image('Captured(T)/rand_img2_left', captured_rand_img_list[2][0], global_batch_num)
+            writer.add_image('Captured(T)/rand_img2_right', captured_rand_img_list[3][0], global_batch_num)
+            
+            writer.add_image('Captured(T)/img1_left', captured_img_list[0][0], global_batch_num)
+            writer.add_image('Captured(T)/img1_right', captured_img_list[1][0], global_batch_num)
+            writer.add_image('Captured(T)/img2_left', captured_img_list[2][0], global_batch_num)
+            writer.add_image('Captured(T)/img2_right', captured_img_list[3][0], global_batch_num)
 
             assert model.training
 
@@ -149,20 +160,35 @@ def train(args):
                 logging.info(f"Saving file {save_path.absolute()}")
                 torch.save(model.state_dict(), save_path)
 
-                valid_loss, valid_fused_disparity, valid_disparity1, valid_disparity2, valid_captured_img_list = validate_kitti2(model.module, iters=args.valid_iters)
+                valid_loss, valid_fused_disparity, valid_disparity1, valid_disparity2, valid_rand_img_list, valid_captured_img_list = validate_kitti2(model.module, iters=args.valid_iters)
                 
                 model.train()
                 model.module.RAFTStereo.freeze_bn() # 수정
                 
+                # Valid disparity map logging
                 writer.add_image('Valid/Fused_disparity', visualize_flow_cmap(valid_fused_disparity), valid_num)
                 writer.add_image('Valid/disparity1', visualize_flow_cmap(valid_disparity1), valid_num)
                 writer.add_image('Valid/disparity2', visualize_flow_cmap(valid_disparity2), valid_num)
                 writer.add_scalar('Valid_loss', valid_loss.item(), valid_num)
                 
-                writer.add_image('Captured(V)/img1_left', check_ldr_image(valid_captured_img_list[0]), global_batch_num)
-                writer.add_image('Captured(V)/img1_right', check_ldr_image(valid_captured_img_list[1]), global_batch_num)
-                writer.add_image('Captured(V)/img2_left', check_ldr_image(valid_captured_img_list[2]), global_batch_num)
-                writer.add_image('Captured(V)/img2_right', check_ldr_image(valid_captured_img_list[3]), global_batch_num)
+                # Simulated Captured image logging
+                writer.add_image('Captured(V)/rand_img1_left', valid_rand_img_list[0][0], global_batch_num)
+                writer.add_image('Captured(V)/rand_img1_right', valid_rand_img_list[1][0], global_batch_num)
+                writer.add_image('Captured(V)/rand_img2_left', valid_rand_img_list[2][0], global_batch_num)
+                writer.add_image('Captured(V)/rand_img2_right', valid_rand_img_list[3][0], global_batch_num)
+                
+                writer.add_image('Captured(V)/img1_left', valid_captured_img_list[0][0], global_batch_num)
+                writer.add_image('Captured(V)/img1_right', valid_captured_img_list[1][0], global_batch_num)
+                writer.add_image('Captured(V)/img2_left', valid_captured_img_list[2][0], global_batch_num)
+                writer.add_image('Captured(V)/img2_right', valid_captured_img_list[3][0], global_batch_num)
+                
+                # # Valid exposure variations logging
+                # writer.add_scalar('Exposure/left_random(v)', exposure_dict['e_rand_l'], global_batch_num)
+                # writer.add_scalar('Exposure/right_random(v)', exposure_dict['e_rand_r'], global_batch_num)
+                # writer.add_scalar('Exposure/left_exp(v)', exposure_dict['e_exp_l'], global_batch_num)
+                # writer.add_scalar('Exposure/right_exp(v)', exposure_dict['e_exp_r'], global_batch_num)
+                # writer.add_scalar('Exposure/left_shifted(v)', exposure_dict['e_shifted_l'], global_batch_num)
+                # writer.add_scalar('Exposure/right_shifted(v)', exposure_dict['e_shifted_r'], global_batch_num)
 
             total_steps += 1
 

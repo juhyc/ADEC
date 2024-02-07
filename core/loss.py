@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class BerHuLoss(nn.Module):
-    def __init__(self, threshold=0.25):
+    def __init__(self, threshold=0.2):
         super(BerHuLoss, self).__init__()
         self.threshold = threshold
 
