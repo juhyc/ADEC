@@ -7,3 +7,4 @@ core/__pycache__
 __pycache__
 *.ipynb
 test/
+models.zip
