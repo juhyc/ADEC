@@ -8,8 +8,24 @@ def read_gen(file_name):
     ext = os.path.splitext(file_name)[-1]
     
     if ext == '.hdr':
-        return cv2.imread(file_name, cv2.IMREAD_ANYDEPTH)
+        img = cv2.imread(file_name, cv2.IMREAD_ANYDEPTH)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        min_val = np.min(img)
+        max_val = np.max(img)
+        normalized_img = (img - min_val) / (max_val - min_val)
+        return normalized_img
+
     elif ext == '.npy':
-        return np.load(file_name)
+        img = np.load(file_name)
+        # read disparity file
+        if len(img.shape)==2:
+            return img
+        # read image file
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            min_val = np.min(img)
+            max_val = np.max(img)
+            normalized_img = (img - min_val) / (max_val - min_val)
+            return normalized_img
     
     return []

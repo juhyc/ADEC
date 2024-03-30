@@ -6,7 +6,7 @@ from torchvision.transforms import ToTensor
 from PIL import Image
 import matplotlib.pyplot as plt
 
-
+DEVICE = 'cuda'
 #  & Calculate histrogram by sub-images with different scale
 def histogram_subimage(image, grid_size):
     """calculate histogram by Green Channel
@@ -129,25 +129,35 @@ def show_histogram(histograms, grid_size):
 class GlobalFeatureNet(nn.Module):
     def __init__(self, M_exp=4):
         super(GlobalFeatureNet, self).__init__()
+        
+        self.exp_min = M_exp**-1
+        self.exp_max = M_exp
 
         self.conv_layers = nn.Sequential(
             # Make sure the input channel is 59, or adjust
-            nn.Conv1d(118, 128, kernel_size=4, stride=4),  
-            nn.ReLU(),
-            nn.Conv1d(128, 256, kernel_size=4, stride=4),
+            nn.Conv1d(118, 256, kernel_size=4, stride=4),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Conv1d(256, 512, kernel_size=4, stride=4),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Conv1d(512, 1024, kernel_size=4, stride=4),
+            nn.BatchNorm1d(1024),
             nn.ReLU(),
         )
 
+        # Todo) Semantic 정보와 통합을 위해 output dimension 1에서 256로 변경
         self.fc_layers = nn.Sequential(
-            nn.Linear(2048, 512),  # Adjust this if needed
+            nn.Linear(4096, 1024), 
             nn.ReLU(),
-            nn.Linear(512, 128),
+            nn.Dropout(0.5),
+            nn.Linear(1024, 256),
             nn.ReLU(),
-            nn.Linear(128, 16),
+            nn.Dropout(0.5),
+            nn.Linear(256, 64),
             nn.ReLU(),
-            nn.Linear(16, 1),
+            nn.Dropout(0.5),
+            nn.Linear(64,1)
         )
 
         self.M_exp = M_exp
@@ -171,24 +181,126 @@ class GlobalFeatureNet(nn.Module):
         x = self.conv_layers(x)
         x = x.view(x.size(0), -1)
         x = self.fc_layers(x)
-        exp_t = (2 * torch.sigmoid(x) - 0.5) * self.M_exp_log.to(x.device)
         
-        return exp_t
+        # x = (2 * (torch.sigmoid(x) - 0.5)) * self.M_exp
+        # x = (torch.sigmoid(x) * self.M_exp - 0.5)
+        # x = x * (self.exp_max - self.exp_min) + self.exp_min
+        # x = (2 * torch.sigmoid(x) - 0.5) * self.M_exp_log.to(x.device)
+        x = torch.sigmoid(x)
+        
+        return x
+
+class FeatureFusionNet(nn.Module):
+    def __init__(self, M_exp=4):
+        super(FeatureFusionNet, self).__init__()
+        self.M_exp = M_exp
+        self.exp_min = M_exp**-1  # 계산된 최소값
+        self.exp_max = M_exp
+        
+        self.fc_layers = nn.Sequential(
+            nn.Linear(512, 128),
+            nn.InstanceNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 32),
+            nn.InstanceNorm1d(32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
+    
+    def forward(self, x):
+        x = self.fc_layers(x)
+        x = torch.sigmoid(x)
+        x = x * (self.exp_max - self.exp_min) + self.exp_min
+        
+        return x
 
 
-def exposure_shift(before_exposure, predicted_exposure, alpha = 0.2):
+class ExposureNet(nn.Module):
+    def __init__(self, M_exp=4):
+        super(ExposureNet, self).__init__()
+        
+        # For LDR image histogram
+        self.conv_layers = nn.Sequential(
+            # Make sure the input channel is 59, or adjust
+            nn.Conv1d(118, 256, kernel_size=4, stride=4),  
+            nn.ReLU(),
+            nn.Conv1d(256, 512, kernel_size=4, stride=4),
+            nn.ReLU(),
+        )
+        
+        # For HDR image dynamic range info, exposure value
+        self.additional_fc = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+        )
+        
+        # fuse con_layer output and additional_fc output
+        self.fc_layers = nn.Sequential(
+            nn.Linear(2048 + 512, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+        )
+        
+        self.M_exp = M_exp
+        self.M_exp_log = torch.log(torch.tensor([self.M_exp], dtype=torch.float))
+
+    def forward(self, ldr_histo, ldr_semantic, hdr_insto, rand_exp):
+        
+        print(f"ldr_histo shape : {ldr_histo}")
+        
+        ldr_histo = ldr_histo.permute(2, 0, 1)        
+        ldr_histo = self.conv_layers(ldr_histo)
+        ldr_histo = ldr_histo.view(ldr_histo.size(0), -1)
+        
+        print("Check shape in saec.py")
+        print(ldr_histo.shape)
+        
+        # additional inpout : HDR dynamic range info, intput rand exposure 
+        additional_inputs = self.additional_fc(additional_inputs)
+        
+        x = torch.cat((x, additional_inputs), dim=1)
+        
+        x = self.fc_layers(x)
+        
+        return x
+
+
+
+def exposure_shift(before_exposure, predicted_exposure, alpha = 0.2, M_exp = 4.0, device= DEVICE):
+    H_exp = torch.tensor(M_exp).to(device)
+    L_exp = torch.tensor(M_exp**-1).to(device)
+    
     difference = predicted_exposure - before_exposure
     adjusted_difference = alpha * difference
     shifted_exposure = before_exposure + adjusted_difference
 
-    return shifted_exposure
-
-
-
-# def exposure_shift(before_exposure, predicted_exposure, smoothing = 0.9):
-#     shifted_exposure = before_exposure * predicted_exposure**(1-smoothing)
+    # Set exposure under, upper value based on camera paramet M_exp.
+    shifted_exposure_clamped = torch.max(torch.min(shifted_exposure, H_exp), L_exp)
     
-#     return shifted_exposure
+    return shifted_exposure_clamped
+
+def exposure_shift2(before_exposure, sigmoid_output, M_exp=4.0, alpha = 0.3, device= DEVICE):
+
+    min_exposure, max_exposure = 1/M_exp, M_exp
+    target_exposure = min_exposure + (max_exposure - min_exposure) * sigmoid_output
+    
+    # 선택적으로, 조정된 노출값과 초기 노출값 사이의 차이를 제한할 수 있음
+    # 이는 모델이 너무 극단적인 노출 조정을 예측하는 것을 방지하기 위함
+    adjusted_difference = (target_exposure - before_exposure) * alpha
+    shifted_exposure = before_exposure + adjusted_difference
+    
+    # 여기서는 직접적으로 타겟 노출을 사용
+    # shifted_exposure = target_exposure
+
+    # 최소 및 최대 노출값으로 클램핑할 필요가 없을 수도 있지만, 실제 카메라 노출 범위를 고려하여 조정
+    shifted_exposure_clamped = torch.clamp(shifted_exposure, min_exposure, max_exposure)
+
+    return shifted_exposure_clamped
+
 
 def exposure_shift_by_threshold(before_exposure, predicted_exposure, smoothing = 0.9, threshold = 1):
     if before_exposure < threshold:

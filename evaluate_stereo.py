@@ -14,6 +14,8 @@ from core.utils.utils import InputPadder
 from core.utils.simulate import *
 from core.loss import *
 
+import core.stereo_datasets2 as datasets2
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -183,6 +185,58 @@ def validate_kitti2(model, iters=32, mixed_prec=False):
         print(f"Validation loss : {loss}")
           
     return loss, fused_disparity, disparity1, disparity2, captured_rand_img_list, captured_img_list
+
+@torch.no_grad()
+def validate_carla(model, iters=32, mixed_prec=False):
+    """Perform validation using the CARLA synthetic dataset"""
+    model.eval()
+    val_dataset = datasets2.CARLA(image_set='validate')
+    torch.backends.cudnn.benchmark = True
+    # criterion = nn.MSELoss().cuda()
+    criterion = nn.L1Loss().cuda()
+    
+    out_list, epe_list, loss_list = [], [], []
+    for val_id in range(len(val_dataset)):
+        _, image1, image2, flow_gt, valid_gt = val_dataset[val_id]
+        image1 = image1[None].cuda()
+        image2 = image2[None].cuda()
+        
+        padder = InputPadder(image1.shape, divis_by = 32)
+        image1, image2 = padder.pad(image1, image2)
+        
+        with autocast(enabled=mixed_prec):
+            start = time.time()
+            fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, disp_rand1, disp_rand2, mask_list, mask_mul_list = model(image1, image2, iters=iters, valid_mode=True)
+            end = time.time()
+            
+        fused_disparity= padder.unpad(fused_disparity).cpu().squeeze(0)
+        valid_mask = (valid_gt >= 0.5)
+        valid_mask = valid_mask.unsqueeze(0)
+        
+        # Validation loss
+        loss = criterion(fused_disparity[valid_mask], flow_gt[valid_mask])
+        loss_list.append(loss.item())
+        
+        # Calculate epe(End-point-error)
+        epe = torch.sum((fused_disparity - flow_gt)**2, dim=0).sqrt()
+        epe_flattened = epe.flatten()
+        val = valid_gt.flatten() >= 0.5
+        
+        # pixel threshold 3.0 pixel
+        out = (epe_flattened > 3.0)
+        
+        epe_list.append(epe_flattened[val].mean().item())
+        out_list.append(out[val].cpu().numpy())
+                
+        # print(f"====Validation loss : {loss}====")
+    
+    epe = np.mean(epe_list)
+    d1 = 100 * np.mean(out_list)
+    loss_mean = np.mean(loss_list)
+    
+    print(f"Validation CARLA : Loss {loss_mean}, D1 {d1}, EPE {epe}")
+    
+    return loss_mean, d1, fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, flow_gt, disp_rand1, disp_rand2, mask_list, mask_mul_list
 
 
 @torch.no_grad()

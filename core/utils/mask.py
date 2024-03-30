@@ -9,7 +9,7 @@ def visualize_mask(mask):
     return Image.fromarray(mask)
 
 # Define the soft-binary thrapezoid function numpy version
-def soft_binary_threshold_np(image_array, alpha = 0.02, beta = 0.98):
+def soft_binary_threshold_np(image_array, alpha = 0.2, beta = 0.95):
     """Soft-binary thrapezoid function
 
     Args:
@@ -37,7 +37,7 @@ def soft_binary_threshold_np(image_array, alpha = 0.02, beta = 0.98):
     
     return mask
 
-def soft_binary_threshold(image_tensor, alpha=0.02, beta=0.98):
+def soft_binary_threshold(image_tensor, alpha=0.1, beta=0.9):
     """Soft-binary trapezoid function for PyTorch tensors.
 
     Args:
@@ -80,7 +80,7 @@ def soft_binary_threshold_batch(image_tensor, alpha=0.02, beta=0.98):
     assert image_tensor.dim() == 4, "image_tensor should have shape [B, C, H, W]."
     
     # Using only the first channel for grayscale
-    grayscale = image_tensor[:, 0:1, :, :] / 255.0
+    grayscale = image_tensor[:, 0:1, :, :]
 
     mask_low = (1/alpha) * grayscale
     mask_low = torch.where(grayscale >= alpha, torch.ones_like(grayscale), mask_low)

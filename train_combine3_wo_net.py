@@ -9,7 +9,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from core.raft_stereo import RAFTStereo
-from core.combine_model import CombineModel
+# * 수정
+from core.combine_model2 import CombineModel_wo_net
 
 from evaluate_stereo import *
 from core.stereo_datasets2 import fetch_dataloader
@@ -20,6 +21,8 @@ import core.loss as loss
 from core.depth_datasets import DepthDataset_stereo
 from core.utils.display import *
 
+# ! Training code with out exposure control network
+
 # Tensorboard를 위한 Writer 초기화
 writer = SummaryWriter('runs/combine_pipeline_carla')
 
@@ -28,7 +31,7 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(args):
     
-    model = torch.nn.DataParallel(CombineModel(args))
+    model = torch.nn.DataParallel(CombineModel_wo_net(args))
     print("Parameter Count : %d" % count_parameters(model))
     
     #^Load dataloader
@@ -76,7 +79,7 @@ def train(args):
     # logging.info(f"Done loading saec checkpoint")
     
     model.cuda()
-    model.train()
+    # model.train()
     
     #^ Freeze RAFTstereo module
     for param in model.module.RAFTStereo.parameters():
@@ -144,8 +147,8 @@ def train(args):
             
             writer.add_scalar("Training_total_loss", total_loss.item(), global_batch_num)
             global_batch_num += 1        
-            total_loss.backward()
-            optimizer.step()
+            # total_loss.backward()
+            # optimizer.step()
             
             # Todo) Validation code 수정
             if total_steps % validation_frequency == validation_frequency - 1:

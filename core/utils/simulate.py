@@ -5,6 +5,7 @@ import random
 from torchvision.transforms import ToTensor
 
 M_exp = 4
+M_sensor = 2**8 - 1
 
 # ^  Adjust input HDR image to LDR image using scaling factor and a,b
 def adjust_dr(image, s, select_range = (0,1)):
@@ -115,13 +116,63 @@ def cal_dynamic_range(image_tensor, exp):
     return a,b
 
 # ^ Generate random exposure factor 
-def generate_random_exposures(batch_size):
-    values1 = []
-    for _ in range(batch_size):
-        value1 = random.uniform(M_exp**(-1), M_exp)
-        values1.append([value1])
+def generate_random_exposures(batch_size, valid_mode=False):
+    exp_list = []
+    
+    if valid_mode:
+        for _ in range(batch_size):
+            exp = 1.25
+            exp_list.append([exp])
+    
+    else:
+        for _ in range(batch_size):
+            exp = random.uniform(M_exp**(-1), M_exp)
+            exp_list.append([exp])
         
-    return torch.tensor(values1)
+    return torch.tensor(exp_list)
+
+# ^ Generate random exposure factor based on HDR scene dynamic range
+def generate_adjusted_random_expousres(batch_size, d_r, gap_threshold = 0.5, large_gap  = 4, small_gap = 2):
+    exp_list = []
+    
+    for _ in range(batch_size):
+        exp1 = random.uniform(M_exp**(-1), M_exp)
+        
+        if d_r >= gap_threshold:
+            adjust_factor = random.uniform(1, large_gap)
+            exp2 = max(min(exp1 * adjust_factor, M_exp), M_exp**(-1))
+        else:
+            adjsut_factor = random.uniform(1/small_gap, 1)
+            exp2 = max(min(exp1 * adjust_factor, M_exp), M_exp**(-1))
+        
+        exp_list.append(([exp1, exp2]))
+    
+    return torch.tensor(exp_list)
+
+def calculate_dynamic_range_batch(images):
+    # images shape: (batch_size, channels, height, width)
+    
+    # weight for luminance
+    weights = torch.tensor([0.2126, 0.7152, 0.0722]).view(1, 3, 1, 1).to(images.device)
+    
+    # rgb to luminance
+    luminance = torch.sum(images * weights, dim=1)
+    
+    dr_values = []
+    for i in range(images.shape[0]):
+        luminance_flat = luminance[i].flatten()
+        
+        percentile_5, percentile_95 = torch.quantile(luminance_flat, torch.tensor([0.05, 0.95]).to(images.device))
+        
+        d_r = (percentile_95 - percentile_5)
+        dr_values.append(d_r)
+    
+    return torch.stack(dr_values)
+
+
+def min_max_scale(image):
+    result = (image - torch.min(image))/(torch.max(image) - torch.min(image))
+    return result
 
 # ^ Image Simulation class (noise modeling, adjust dynamic range)
 class ImageFormation:
@@ -138,20 +189,25 @@ class ImageFormation:
             raise ValueError("'exp' should be a positive value.")
         
         self.device = torch.device(device)
-        self.gauss_var = float(1e-6)
-        self.poisson_scale = float(3.4e-4)
+        self.gauss_var = float(2e-5)
+        self.poisson_scale = float(6.8e-3)
         
         # HDR scene
-        self.original_phi = image.to(self.device)/255.0
+        # !
+        if image.max() == 255.0:
+            self.original_phi = image.to(self.device)/255.0
+        else :
+            # self.original_phi = min_max_scale(image).to(self.device)
+            self.original_phi = (image).to(self.device)
         self.phi = self.original_phi.clone()
         self.exp = exp.to(self.device)
         
         # Max shutter speed 15m/s
-        self.T_max = 1.5
+        self.T_max = 3
         
         # Camera gain and shutter speed for each image in the batch
-        self.g = torch.max(torch.ones_like(self.exp), self.exp/self.T_max)
-        self.t = self.exp/self.g
+        self.g = torch.max(torch.ones_like(self.exp) * 2.0, self.exp/self.T_max)
+        self.t = self.exp/(self.g * 1.2)
     
     def cal_dynamic_range(self, img, exp):
         """Calculate dynamic range from image statistic and exposure value.
@@ -199,8 +255,8 @@ class ImageFormation:
         """
 
         # Validation check
-        if torch.any(self.phi < 0) or torch.any(self.phi > 1):
-            raise ValueError("The image values should be between 0 and 1.")
+        # if torch.any(self.phi < 0) or torch.any(self.phi > 1):
+        #     raise ValueError("The image values should be between 0 and 1.")
         if iso <= 0:
             raise ValueError("ISO value should be positive.")
         
@@ -221,15 +277,11 @@ class ImageFormation:
         adc_noise = gauss_std * torch.randn_like(phi_scaled)
         
         noise_hdr = shot_noise + readout_noise + adc_noise
-        
-        noise_hdr = torch.clamp(noise_hdr, 0, 1)
-        
-        # Adjust dynamic range HDR -> LDR
-        a,b = self.cal_dynamic_range(noise_hdr, self.exp)
 
         e_expanded = self.exp.view(-1,1,1,1)
         
-        noise_ldr = (e_expanded * noise_hdr - a) / (b - a)
-        noise_ldr = torch.clamp(noise_ldr, 0, 1)
+        # HDR to LDR clamping
+        # * 3/28 change underbound 0 to 1/M_exp to reduce dynamic range
+        noise_ldr = torch.clamp((e_expanded * noise_hdr), M_exp**-1, 1)
                 
         return noise_ldr
