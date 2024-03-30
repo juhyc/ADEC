@@ -21,49 +21,103 @@ import core.stereo_datasets as datasets
 
 DEVICE = 'cuda'
 
-###############################
-# * End to end pipeline with exposure control module using network
-###############################
 def load_image(imfile):
     img = np.array(imfile).astype(np.uint8)
     img = torch.from_numpy(img).permute(2, 0, 1).float()
     return img[None].to(DEVICE)
 
-class FeatureDimReducer(nn.Module):
-    def __init__ (self, input_dim = 1000, output_dim = 64):
-        super(FeatureDimReducer, self).__init__()
-        self.reducer = nn.Sequential(
-            nn.Linear(input_dim, output_dim),
-            nn.ReLU(),
-            nn.Dropout(0.5)
-        )
-    def forward(self, x):
-        return self.reducer(x)
+def evaluate_dynamic_range(batch_images, bins=256, bright_threshold=0.75, dark_threshold=0.25):
+    """
+    evaluate dynamic range based on batch images
+    """
+    batch_size = batch_images.size(0)
+    dynamic_range_scores = torch.zeros(batch_size)
+    avg_brightness_scores = torch.zeros(batch_size)
+    
+    for i in range(batch_size):
+        image = batch_images[i].mean(dim=0)  # 채널별 평균을 계산하여 그레이스케일 이미지처럼 처리
+        hist = torch.histc(image.flatten(), bins=bins, min=0, max=1)
+        
+        # 밝은 영역과 어두운 영역의 픽셀 수 계산
+        bright_pixels = hist[int(bright_threshold*bins):].sum()
+        dark_pixels = hist[:int(dark_threshold*bins)].sum()
+        
+        # 동적 범위 평가
+        dynamic_range_scores[i] = bright_pixels / (dark_pixels + 1e-5)
+        # 평균 밝기
+        avg_brightness_scores[i] = image.mean()
+    
+    return dynamic_range_scores, avg_brightness_scores
 
-def weights_init(m):
-    if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
-        nn.init.normal_(m.weight, mean=0.0, std=0.02)
-        if m.bias is not None:
-            nn.init.constant_(m.bias, 0)
+def adjust_exposure_based_on_dynamic_range(dynamic_range_scores, avg_brightness_scores, base_exposure_gap=0.5):
+    """
+    동적 범위 점수에 기반하여 노출 갭을 조정합니다.
+    
+    :param dynamic_range_scores: 동적 범위를 나타내는 점수의 배치 ([B] 형태)
+    :param base_exposure_gap: 기본 노출 갭 값
+    :return: 조정된 노출 갭의 배치 ([B] 형태)
+    """
+    # 최소 노출 갭과 최대 노출 갭 계산
+    min_exposure_gap = 1/4
+    max_exposure_gap = M_exp - min_exposure_gap
+    
+    # 동적 범위 점수에 따라 기본 노출 갭에 스케일 조정을 적용
+    scaled_exposure_gaps = base_exposure_gap * (1 + (dynamic_range_scores - 1) / 10)
+    
+    # 계산된 노출 갭이 최소값과 최대값 사이에 있도록 조정
+    adjusted_exposure_gaps = torch.clamp(scaled_exposure_gaps, min_exposure_gap, 0.75)
+    
+    return adjusted_exposure_gaps
 
-class CombineModel(nn.Module):
+def adjust_exposure_based_on_dynamic_range(dynamic_range_scores, avg_brightness_scores, base_exposure_gap=0.5):
+    """
+    동적 범위 및 평균 밝기 점수에 기반하여 노출 갭을 조정합니다.
+    """
+    # 조정된 노출 갭 초기화
+    adjusted_exposure_gaps = torch.zeros_like(dynamic_range_scores)
+    # 조정 전략 결정
+    for i in range(len(dynamic_range_scores)):
+        if dynamic_range_scores[i] > 1.0 and 0.4 < avg_brightness_scores[i] < 0.6:
+            # 동적 범위가 넓고 평균 밝기가 중간
+            adjusted_exposure_gaps[i] = base_exposure_gap * 2  # 큰 노출 갭
+        elif avg_brightness_scores[i] <= 0.3:
+            # 평균 밝기가 어두운 경우
+            adjusted_exposure_gaps[i] = base_exposure_gap * 0.5  # 작은 노출 갭, 둘다 증가
+        elif avg_brightness_scores[i] >= 0.7:
+            # 평균 밝기가 밝은 경우
+            adjusted_exposure_gaps[i] = base_exposure_gap * 0.5  # 작은 노출 갭, 둘다 감소
+        elif dynamic_range_scores[i] <= 1.0 and 0.3 < avg_brightness_scores[i] < 0.7:
+            # 동적 범위가 좁고 평균 밝기가 중간
+            adjusted_exposure_gaps[i] = base_exposure_gap * 0.75  # 작은 노출 갭, 하나는 증가 하나는 감소
+            
+    return adjusted_exposure_gaps
+
+
+
+
+def adjust_frame_exposures(base_exposure_1, base_exposure_2, exposure_gaps, avg_brightness_scores, scaling_factor = 1.0):
+    # 평균 밝기가 낮은 이미지에 대해서는 노출값을 증가
+    for i in range(len(exposure_gaps)):
+        if avg_brightness_scores[i] <= 0.25:
+            # 노출 갭이 줄어든 만큼 기본 노출값을 증가시킴
+            adjusted_exposure_1 = base_exposure_1 + (0.5 * exposure_gaps[i]) * scaling_factor
+            adjusted_exposure_2 = base_exposure_2 + (0.5 * exposure_gaps[i]) * scaling_factor
+        elif avg_brightness_scores[i] >= 0.75:
+            # 기본 노출값 조정 로직
+            adjusted_exposure_1 = base_exposure_1 - (0.5 * exposure_gaps[i]) * scaling_factor
+            adjusted_exposure_2 = base_exposure_2 - (0.5 * exposure_gaps[i]) * scaling_factor
+        elif 0.25 < avg_brightness_scores[i] < 0.75:
+            adjusted_exposure_1 = base_exposure_1 - (0.3 * exposure_gaps[i]) 
+            adjusted_exposure_2 = base_exposure_2 + (0.7 * exposure_gaps[i])
+            
+    return adjusted_exposure_1, adjusted_exposure_2
+
+# ! Not use exposure network but algorithm
+class CombineModel_wo_net(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.GlobalFeatureNet1 = GlobalFeatureNet()
-        self.GlobalFeatureNet2 = GlobalFeatureNet()
         self.RAFTStereo = RAFTStereo(args)
-        
-        self.GlobalFeatureNet1.apply(weights_init)
-        self.GlobalFeatureNet2.apply(weights_init)
-        # self.DisparityFusion = DisparityFusion_ResUnet()
-        # * Feature encoder
-        # self.feature_encoder = models.resnet50(pretrained=True)
-        # self.feature_encoder.eval()
-        # self.feature_encoder.fc = nn.Identity()
-        # self.dim_reducer = FeatureDimReducer(input_dim=2048, output_dim = 128)
-        # * Feature FusionNet for incorporate globalfeature and semantic feature
-        # self.feature_fusion = FeatureFusionNet()
     
     def convert_to_tensor(self, image):
         if isinstance(image, Image.Image):
@@ -75,8 +129,8 @@ class CombineModel(nn.Module):
         
         #^ Simulator Module HDR -> LDR
         # initial random exposure
-        e_rand_high_pair = generate_random_exposures(left_hdr.shape[0])
-        e_rand_low_pair = generate_random_exposures(right_hdr.shape[0])
+        e_rand_high_pair = generate_random_exposures(left_hdr.shape[0], valid_mode=True)
+        e_rand_low_pair = generate_random_exposures(right_hdr.shape[0], valid_mode=True)
         
         # For valid mode, not random exposure but default 1.0 exp value
         if valid_mode:
@@ -101,48 +155,23 @@ class CombineModel(nn.Module):
         ldr_left_expl_cap = phi_l_expl.noise_modeling()
         ldr_right_expl_cap = phi_r_expl.noise_modeling()
         
-        # Calculate image histogram for image statistic feature
-        stacked_histo_exph_pair = calculate_histograms2(ldr_left_exph_cap, ldr_right_exph_cap)
-        stacked_histo_expl_pair = calculate_histograms2(ldr_left_expl_cap, ldr_right_expl_cap)
-        
-        #^ Feature encoder for semantic information
-        # with torch.no_grad():
-        #     ldr_left_exph_feature = self.feature_encoder(ldr_left_exph_cap)
-        #     ldr_right_exph_feature = self.feature_encoder(ldr_right_exph_cap)
-        #     ldr_left_expl_feature = self.feature_encoder(ldr_left_expl_cap)
-        #     ldr_right_expl_feature = self.feature_encoder(ldr_right_expl_cap)
-            
-        # ldr_left_exph_featured_reduced = self.dim_reducer(ldr_left_exph_feature)
-        # ldr_right_exph_featured_reduced = self.dim_reducer(ldr_right_exph_feature)
-        # ldr_left_expl_featured_reduced = self.dim_reducer(ldr_left_expl_feature)
-        # ldr_right_expl_featured_reduced = self.dim_reducer(ldr_right_expl_feature)
-        
-        #^ Global FeatureNetwork        
-        # ! Tensor with 2 elements cannot be converted to Scalar
-        # ! output_l, output_r shape [batch_size, estimated value]
-    
-        e_exp_high = self.GlobalFeatureNet1(stacked_histo_exph_pair.T)
-        e_exp_low = self.GlobalFeatureNet2(stacked_histo_expl_pair.T)
-        
-        #^ Concat statistic, semantic inform
-        # combined_feature_high = torch.cat((ldr_left_exph_featured_reduced, e_exp_high, ldr_right_exph_featured_reduced), dim = 1)
-        # combined_feature_low = torch.cat((ldr_left_expl_featured_reduced, e_exp_low, ldr_right_expl_featured_reduced), dim = 1) #[batch, 512]
-        
-        #^ Feature Fusion Network [statistic, semantic]
-        # e_exp_high2 = self.feature_fusion(combined_feature_high) # [batch, 1]
-        # e_exp_low2 = self.feature_fusion(combined_feature_low)
+        #################################################CHANGED###################################################
+        #^ Adjust exposure based on dynamic range
+        dynamic_range_scores, avg_brightness_scores = evaluate_dynamic_range(ldr_left_exph_cap)
+        adjusted_exposure_gaps = adjust_exposure_based_on_dynamic_range(dynamic_range_scores, avg_brightness_scores)
         
         #^ Exposure shift
-        e_shifted_high = exposure_shift2(e_rand_high_pair.to(device=DEVICE), e_exp_high)
-        e_shifted_low = exposure_shift2(e_rand_low_pair.to(device=DEVICE), e_exp_low)
+        e_shifted_high, e_shifted_low = adjust_frame_exposures(e_rand_high_pair, e_rand_low_pair, adjusted_exposure_gaps, avg_brightness_scores, scaling_factor=1.7)
         
         #^ Check Exposure values
         print("=====Random exp values=====")
         print(f"Random exp_l : {e_rand_high_pair[0].item():4f}, Random exp_r : {e_rand_low_pair[0].item():4f}")
-        print("=====Before shifted exp values=====")
-        print(f"output_exp_l : {e_exp_high[0].item()}, output_exp_r : {e_exp_low[0].item()}")
+        print("=====조정된 노출 갭=====")
+        print(f"조정된 노출 갭: {adjusted_exposure_gaps}")
         print("=====Shifted exp values=====")
         print(f"shifted_exp_l : {e_shifted_high[0].item():4f}, shifted_exp_r : {e_shifted_low[0].item():4f}")
+        
+        ##############################################################################################################
         
         #^ Simulate Image LDR with shifted exposure value
         phi_hat_l_exph = ImageFormation(left_hdr, e_shifted_high, device=DEVICE)
@@ -170,13 +199,6 @@ class CombineModel(nn.Module):
         
         # Todo) Run Disparity_fusion module using disparity1,2 and its mask.
         # Todo) Check : disparity1,2, mask type. shape
-        
-        # * Existed. disaprity fusion using network.
-        # fused_disparity = self.DisparityFusion(disparity_exph[-1], disparity_expl[-1], mask_exph, mask_expl)
-        # exposure_dict = {'e_rand_l': e_rand_l_pair[0].item(),'e_rand_r':e_rand_r_pair[0].item(),
-        #                  'e_exp_l': e_exp_l_pair[0].item(), 'e_exp_r': e_exp_r_pair[0].item(),
-        #                  'e_shifted_l' : e_shifted_l[0].item(), 'e_shifted_r' : e_shifted_r[0].item()
-        #                  }
         
         # ^ disparity fusion using exposure mask multiplication
         disparity_exph_mul = disparity_exph[-1] * mask_exph

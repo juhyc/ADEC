@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class BerHuLoss(nn.Module):
     def __init__(self, threshold=0.2):
@@ -19,3 +20,12 @@ class BerHuLoss(nn.Module):
         # 두 부분을 결합
         loss = torch.where(diff <= delta, part1, part2)
         return loss.mean()
+
+
+def calculate_entropy(feature_map):
+    probs = F.softmax(feature_map, dim = -1)
+    
+    log_probs = torch.log(probs)
+    entropy = -torch.sum(probs * log_probs, dim = -1)
+    return entropy
+
