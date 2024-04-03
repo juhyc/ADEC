@@ -6,6 +6,8 @@ from torchvision.transforms import ToTensor
 from PIL import Image
 import matplotlib.pyplot as plt
 
+# * Exposure control network
+
 DEVICE = 'cuda'
 #  & Calculate histrogram by sub-images with different scale
 def histogram_subimage(image, grid_size):
@@ -146,7 +148,6 @@ class GlobalFeatureNet(nn.Module):
             nn.ReLU(),
         )
 
-        # Todo) Semantic 정보와 통합을 위해 output dimension 1에서 256로 변경
         self.fc_layers = nn.Sequential(
             nn.Linear(4096, 1024), 
             nn.ReLU(),
@@ -268,7 +269,7 @@ class ExposureNet(nn.Module):
         
         return x
 
-
+# * Exposure shift functions
 
 def exposure_shift(before_exposure, predicted_exposure, alpha = 0.2, M_exp = 4.0, device= DEVICE):
     H_exp = torch.tensor(M_exp).to(device)
@@ -288,19 +289,12 @@ def exposure_shift2(before_exposure, sigmoid_output, M_exp=4.0, alpha = 0.3, dev
     min_exposure, max_exposure = 1/M_exp, M_exp
     target_exposure = min_exposure + (max_exposure - min_exposure) * sigmoid_output
     
-    # 선택적으로, 조정된 노출값과 초기 노출값 사이의 차이를 제한할 수 있음
-    # 이는 모델이 너무 극단적인 노출 조정을 예측하는 것을 방지하기 위함
     adjusted_difference = (target_exposure - before_exposure) * alpha
     shifted_exposure = before_exposure + adjusted_difference
-    
-    # 여기서는 직접적으로 타겟 노출을 사용
-    # shifted_exposure = target_exposure
 
-    # 최소 및 최대 노출값으로 클램핑할 필요가 없을 수도 있지만, 실제 카메라 노출 범위를 고려하여 조정
     shifted_exposure_clamped = torch.clamp(shifted_exposure, min_exposure, max_exposure)
 
     return shifted_exposure_clamped
-
 
 def exposure_shift_by_threshold(before_exposure, predicted_exposure, smoothing = 0.9, threshold = 1):
     if before_exposure < threshold:

@@ -19,6 +19,7 @@ except:
         def __exit__(self, *args):
             pass
 
+
 class RAFTStereo(nn.Module):
     def __init__(self, args):
         super().__init__()

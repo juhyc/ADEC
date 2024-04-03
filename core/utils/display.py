@@ -9,6 +9,10 @@ import re
 import io
 from torchvision.transforms.functional import to_tensor
 
+###############################################
+# * Visualize code for tensorboard logging
+###############################################
+
 def show_images(images):
     fig, axs = plt.subplots(1, len(images), figsize=(20, 10))
     for i, img in enumerate(images):

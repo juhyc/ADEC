@@ -14,6 +14,10 @@ import logging
 import numpy as np
 from glob import glob
 
+###############################################
+# * Dataset class for synthetic CARLA dataset
+###############################################
+
 class StereoDataset(data.Dataset):
     def __init__(self,  reader = None):
   
@@ -76,7 +80,9 @@ class StereoDataset(data.Dataset):
     
     def __len__(self):
         return len(self.image_list)
-    
+
+# * For CARLA synthetic dataset class
+
 class CARLA(StereoDataset):
     def __init__(self, root = 'datasets/CARLA', image_set='training'):
         super(CARLA, self).__init__(reader=read_gen)
