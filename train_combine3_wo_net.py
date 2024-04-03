@@ -21,9 +21,9 @@ import core.loss as loss
 from core.depth_datasets import DepthDataset_stereo
 from core.utils.display import *
 
-# ! Training code with out exposure control network
+# ! Training code without exposure control network
 
-# Tensorboard를 위한 Writer 초기화
+# Initialize writer for tensorboard logging
 writer = SummaryWriter('runs/combine_pipeline_carla')
 
 # CUDA

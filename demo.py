@@ -19,6 +19,8 @@ from core.utils.display import *
 
 from core.stereo_datasets2 import fetch_dataloader
 
+# * Test code
+
 writer = SummaryWriter('runs/demo')
 
 DEVICE = 'cuda'

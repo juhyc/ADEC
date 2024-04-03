@@ -10,14 +10,13 @@ class BerHuLoss(nn.Module):
     def forward(self, predictions, targets):
         diff = torch.abs(predictions - targets)
         delta = self.threshold * torch.max(diff).item()
-
-        # 델타보다 작은 오류에 대해서는 L1 손실 사용
+        
+        # Apply L1 loss, if loss is less then delta
         part1 = diff
 
-        # 델타보다 큰 오류에 대해서는 델타에 의해 수정된 L2 손실 사용
+        # Appy L2 loss, if loss is greater than delta
         part2 = (diff**2 + delta**2) / (2 * delta)
 
-        # 두 부분을 결합
         loss = torch.where(diff <= delta, part1, part2)
         return loss.mean()
 
