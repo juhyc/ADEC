@@ -21,7 +21,10 @@ import core.loss as loss
 from core.depth_datasets import DepthDataset_stereo
 from core.utils.display import *
 
+###############################################
 # ! Training code without exposure control network
+# Todo) Check image formation results and exposure control by image histrogram
+###############################################
 
 # Initialize writer for tensorboard logging
 writer = SummaryWriter('runs/combine_pipeline_carla')
@@ -31,7 +34,7 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(args):
     
-    model = torch.nn.DataParallel(CombineModel_wo_net(args))
+    model = torch.nn.DataParallel(CombineModel_wo_net(args), device_ids=[0])
     print("Parameter Count : %d" % count_parameters(model))
     
     #^Load dataloader

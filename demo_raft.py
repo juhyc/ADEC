@@ -12,7 +12,9 @@ from utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
 
-# ^ 기존 RAFT 코드의 demo
+###############################################
+# ^ Original RAFT test code demo.py
+###############################################
 
 DEVICE = 'cuda'
 

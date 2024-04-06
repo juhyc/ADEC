@@ -17,6 +17,9 @@ import os.path as osp
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
 
+###############################################
+# ! Original RAFT-stereo dataset class
+###############################################
 
 class StereoDataset(data.Dataset):
     def __init__(self, aug_params=None, sparse=False, reader=None):

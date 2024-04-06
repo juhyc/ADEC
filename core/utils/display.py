@@ -8,6 +8,7 @@ import glob
 import re
 import io
 from torchvision.transforms.functional import to_tensor
+from core.saec import calculate_histogram_global
 
 ###############################################
 # * Visualize code for tensorboard logging
@@ -235,3 +236,22 @@ def visualize_dynamic_range_entropy(batch_image, HDR = True):
     image_tensor = to_tensor(image)
     
     return image_tensor
+
+# * Histogram visualize for tensorboard logging as image file
+def visualize_histogram(img):
+    histo = calculate_histogram_global(img)
+    values = histo[0][0].cpu().numpy()
+    frequency = np.arange(len(values))
+    fig = plt.figure(figsize=(10,8))
+    plt.bar(frequency, values, width=2.0)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of green channel intensity')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='jpeg')
+    buf.seek(0)
+    image = Image.open(buf)
+    image = np.array(image)
+    
+    return image

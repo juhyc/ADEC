@@ -6,7 +6,9 @@ from torchvision.transforms import ToTensor
 from PIL import Image
 import matplotlib.pyplot as plt
 
-# * Exposure control network
+###############################################
+# * Exposure control network and its functions
+###############################################
 
 DEVICE = 'cuda'
 #  & Calculate histrogram by sub-images with different scale
@@ -108,6 +110,107 @@ def calculate_histograms2(left_ldr_image, right_ldr_image):
     stacked_histo_tensor = stack_histogram(list_of_histograms)
     
     return stacked_histo_tensor
+
+def calculate_histogram_global(image):
+    histo_global = histogram_subimage(image, 1)
+    return histo_global
+
+# * Calculate histogram sknewness by saturation mask threshold value
+def calculate_exposure_adjustment(histogram, low_threshold=5, high_threshold=250):
+    
+    total_pixels = torch.sum(histogram)
+    
+    low_exposure_pixels = torch.sum(histogram[:low_threshold])
+    low_exposure_ratio = low_exposure_pixels / total_pixels
+    
+    high_exposure_pixels = torch.sum(histogram[high_threshold:])
+    high_exposure_ratio = high_exposure_pixels / total_pixels
+    
+    # print(f"Low exposure ratio : {low_exposure_ratio}")
+    # print(f"High exposure ratio : {high_exposure_ratio}")
+
+    return low_exposure_ratio, high_exposure_ratio
+
+# * For batch histograms
+def calculate_batch_exposure_adjustment(batch_histograms, low_threshold=5, high_threshold=250):
+    batch_exp_saturation_level = []
+    # -1 :under, +1 : over
+    
+    # [batch, list, bins = 256]
+    # if grid == 1, list = 0
+    for histogram in batch_histograms:
+        low_exposure_ratio, high_exposure_ratio = calculate_exposure_adjustment(histogram[0], low_threshold, high_threshold)
+        if low_exposure_ratio < high_exposure_ratio: # over saturation
+            batch_exp_saturation_level.append(1)
+        else: #under saturation
+            batch_exp_saturation_level.append(-1)
+
+    return torch.tensor(batch_exp_saturation_level).unsqueeze(-1)
+
+def batch_exp_adjustment(batch_exp_f1, batch_exp_f2, batch_saturation_level_f1, batch_saturation_level_f2):
+    shifted_exp_f1 = torch.zeros_like(batch_exp_f1)
+    shifted_exp_f2 = torch.zeros_like(batch_exp_f2)
+    
+    for i in range(batch_exp_f1.size(0)):
+        exp_f1, exp_f2 = batch_exp_f1[i], batch_exp_f2[i]
+        sat_f1, sat_f2 = batch_saturation_level_f1[i], batch_saturation_level_f2[i]
+        # if 1,2 frame under saturation
+        if sat_f1 < 0 and sat_f2 < 0:
+            shifted_exp_f1[i] = exposure_shift(exp_f1, decrease=False)
+            shifted_exp_f2[i] = exposure_shift(exp_f2, decrease=False)
+        # if 1,2, frame over saturation
+        elif sat_f1 > 0 and sat_f2 >0:
+            shifted_exp_f1[i] = exposure_shift(exp_f1, decrease=True)
+            shifted_exp_f2[i] = exposure_shift(exp_f2, decrease=True)
+        
+        # if 1 or 2 frame over, under saturation separately
+        elif sat_f1 < 0 and sat_f2 > 0 and exp_f1 < exp_f2:
+            shifted_exp_f1[i] = exposure_shift(exp_f1, decrease=False)
+            shifted_exp_f2[i] = exposure_shift(exp_f2, decrease=True)
+        elif sat_f1 >0 and sat_f2 < 0 and exp_f1 > exp_f2:
+            shifted_exp_f1[i] = exposure_shift(exp_f1, decrease=True)
+            shifted_exp_f2[i] = exposure_shift(exp_f2, decrease=False)
+        else:
+            shifted_exp_f1[i] = exp_f1
+            shifted_exp_f2[i] = exp_f2
+
+    return shifted_exp_f1, shifted_exp_f2
+
+def exposure_shift(exp, alpha = 0.3, decrease=False):
+    if decrease:
+        shifted_exp = exp - (alpha * exp)
+    else:
+        shifted_exp = exp + (alpha * exp)
+    return shifted_exp
+
+def exposure_shift_batch(batch_size, exp, alpha=0.3, high=True):
+    exp_list = []
+    
+    if high:
+        for _ in range(batch_size):
+            shifted_exp = exp - (alpha * exp)
+            exp_list.append(shifted_exp)
+    else:
+        for _ in range(batch_size):
+            shifted_exp = exp + (alpha * exp)
+            exp_list.append(shifted_exp)
+
+    return torch.tensor(exp_list).unsqueeze(-1)  # 차원 추가로 리스트 형태의 텐서 반환
+
+def batch_exposure_adjustment(batch_low_ratios, batch_high_ratios, e_rand):
+    adjusted_exposures = []
+
+    for low_ratio, high_ratio in zip(batch_low_ratios, batch_high_ratios):
+        if low_ratio < high_ratio:
+            # 고조도 비율이 더 높은 경우, 노출을 감소
+            shifted_exp = exposure_shift(1, e_rand, high=True)
+        else:
+            # 저조도 비율이 더 높은 경우, 노출을 증가
+            shifted_exp = exposure_shift(1, e_rand, high=False)
+        adjusted_exposures.append(shifted_exp)
+
+    # 배치 단위로 조정된 노출 값들을 텐서로 반환
+    return torch.cat(adjusted_exposures, dim=0)
 
 
 # & Show historgram by different grid_size
@@ -271,35 +374,35 @@ class ExposureNet(nn.Module):
 
 # * Exposure shift functions
 
-def exposure_shift(before_exposure, predicted_exposure, alpha = 0.2, M_exp = 4.0, device= DEVICE):
-    H_exp = torch.tensor(M_exp).to(device)
-    L_exp = torch.tensor(M_exp**-1).to(device)
+# def exposure_shift(before_exposure, predicted_exposure, alpha = 0.2, M_exp = 4.0, device= DEVICE):
+#     H_exp = torch.tensor(M_exp).to(device)
+#     L_exp = torch.tensor(M_exp**-1).to(device)
     
-    difference = predicted_exposure - before_exposure
-    adjusted_difference = alpha * difference
-    shifted_exposure = before_exposure + adjusted_difference
+#     difference = predicted_exposure - before_exposure
+#     adjusted_difference = alpha * difference
+#     shifted_exposure = before_exposure + adjusted_difference
 
-    # Set exposure under, upper value based on camera paramet M_exp.
-    shifted_exposure_clamped = torch.max(torch.min(shifted_exposure, H_exp), L_exp)
+#     # Set exposure under, upper value based on camera paramet M_exp.
+#     shifted_exposure_clamped = torch.max(torch.min(shifted_exposure, H_exp), L_exp)
     
-    return shifted_exposure_clamped
+#     return shifted_exposure_clamped
 
-def exposure_shift2(before_exposure, sigmoid_output, M_exp=4.0, alpha = 0.3, device= DEVICE):
+# def exposure_shift2(before_exposure, sigmoid_output, M_exp=4.0, alpha = 0.3, device= DEVICE):
 
-    min_exposure, max_exposure = 1/M_exp, M_exp
-    target_exposure = min_exposure + (max_exposure - min_exposure) * sigmoid_output
+#     min_exposure, max_exposure = 1/M_exp, M_exp
+#     target_exposure = min_exposure + (max_exposure - min_exposure) * sigmoid_output
     
-    adjusted_difference = (target_exposure - before_exposure) * alpha
-    shifted_exposure = before_exposure + adjusted_difference
+#     adjusted_difference = (target_exposure - before_exposure) * alpha
+#     shifted_exposure = before_exposure + adjusted_difference
 
-    shifted_exposure_clamped = torch.clamp(shifted_exposure, min_exposure, max_exposure)
+#     shifted_exposure_clamped = torch.clamp(shifted_exposure, min_exposure, max_exposure)
 
-    return shifted_exposure_clamped
+#     return shifted_exposure_clamped
 
-def exposure_shift_by_threshold(before_exposure, predicted_exposure, smoothing = 0.9, threshold = 1):
-    if before_exposure < threshold:
-        shifted_exposure = before_exposure * predicted_exposure**(2-smoothing)
-    else:
-        shifted_exposure = before_exposure * predicted_exposure**(1-smoothing)
+# def exposure_shift_by_threshold(before_exposure, predicted_exposure, smoothing = 0.9, threshold = 1):
+#     if before_exposure < threshold:
+#         shifted_exposure = before_exposure * predicted_exposure**(2-smoothing)
+#     else:
+#         shifted_exposure = before_exposure * predicted_exposure**(1-smoothing)
     
-    return shifted_exposure
+#     return shifted_exposure

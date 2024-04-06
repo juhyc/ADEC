@@ -2,8 +2,10 @@ import os
 import cv2
 import numpy as np
 from glob import glob
+###############################################
+#* read file by file extensions
+###############################################
 
-# file의 확장자명을 파악하고 읽는 형태
 def read_gen(file_name):
     ext = os.path.splitext(file_name)[-1]
     

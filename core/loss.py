@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+###############################################
+# * Loss functions
+###############################################
+
+
 class BerHuLoss(nn.Module):
     def __init__(self, threshold=0.2):
         super(BerHuLoss, self).__init__()

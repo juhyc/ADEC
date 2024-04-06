@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+###############################################
+# * Disparity fusion network
+###############################################
+
 def pad_to_match(x, target_shape):
     height, width = target_shape
     diffY = height - x.size(2)
