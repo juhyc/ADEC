@@ -7,6 +7,10 @@ from torchvision.transforms import ToTensor
 M_exp = 4
 M_sensor = 2**8 - 1
 
+###############################################
+# * Image formation model, noise simulation
+###############################################
+
 # ^  Adjust input HDR image to LDR image using scaling factor and a,b
 def adjust_dr(image, s, select_range = (0,1)):
     """adjust dynamic range HDR -> LDR simulation
@@ -246,6 +250,17 @@ class ImageFormation:
         img_denormalized = img_denormalized / exp
         
         return img_denormalized
+    
+    def quantize_tensor(self, x , n = 8):
+        max_val = 2**n - 1
+        
+        x_scaled = x*max_val
+        
+        x_clamped = torch.clamp(x_scaled, 0, max_val)
+        
+        x_quantized = torch.round(x_clamped)
+        
+        return x_quantized/max_val
         
     def noise_modeling(self, iso = float(100.)):
         """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
@@ -279,9 +294,14 @@ class ImageFormation:
         noise_hdr = shot_noise + readout_noise + adc_noise
 
         e_expanded = self.exp.view(-1,1,1,1)
+
+       
+       # * Edit on 4/5
+
+        noise_ldr = torch.clamp((e_expanded * noise_hdr), 0.1, 0.9)
+        normalized = (noise_ldr - 0.1) / (0.9 - 0.1)
         
-        # HDR to LDR clamping
-        # * 3/28 change underbound 0 to 1/M_exp to reduce dynamic range
-        noise_ldr = torch.clamp((e_expanded * noise_hdr), M_exp**-1, 1)
+        # quantized
+        quantized = self.quantize_tensor(normalized)
                 
-        return noise_ldr
+        return quantized

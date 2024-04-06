@@ -4,12 +4,16 @@ import matplotlib.pyplot as plt
 import torch
 from PIL import Image
 
+###############################################
+# * Create exposure saturation mask
+###############################################
+
 def visualize_mask(mask):
     mask = (mask*255).astype(np.uint8)
     return Image.fromarray(mask)
 
 # Define the soft-binary thrapezoid function numpy version
-def soft_binary_threshold_np(image_array, alpha = 0.2, beta = 0.95):
+def soft_binary_threshold_np(image_array, alpha = 0.1, beta = 0.9):
     """Soft-binary thrapezoid function
 
     Args:
@@ -37,7 +41,7 @@ def soft_binary_threshold_np(image_array, alpha = 0.2, beta = 0.95):
     
     return mask
 
-def soft_binary_threshold(image_tensor, alpha=0.1, beta=0.9):
+def soft_binary_threshold(image_tensor, alpha=0.02, beta=0.98):
     """Soft-binary trapezoid function for PyTorch tensors.
 
     Args:
@@ -65,7 +69,7 @@ def soft_binary_threshold(image_tensor, alpha=0.1, beta=0.9):
     
     return mask
 
-def soft_binary_threshold_batch(image_tensor, alpha=0.02, beta=0.98):
+def soft_binary_threshold_batch(image_tensor, alpha=0.1, beta=0.9):
     """Soft-binary trapezoid function for PyTorch tensors in batch.
 
     Args:

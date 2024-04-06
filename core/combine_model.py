@@ -24,6 +24,7 @@ DEVICE = 'cuda'
 ###############################
 # * End to end pipeline with exposure control module using network
 ###############################
+
 def load_image(imfile):
     img = np.array(imfile).astype(np.uint8)
     img = torch.from_numpy(img).permute(2, 0, 1).float()

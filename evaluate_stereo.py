@@ -16,6 +16,10 @@ from core.loss import *
 
 import core.stereo_datasets2 as datasets2
 
+###############################################
+# * For validate pipeline
+###############################################
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
