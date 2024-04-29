@@ -21,7 +21,10 @@ import core.loss as loss
 from core.depth_datasets import DepthDataset_stereo
 from core.utils.display import *
 
+###############################################
 # ! Training code without exposure control network
+# Todo) Check image formation results and exposure control by image histrogram
+###############################################
 
 # Initialize writer for tensorboard logging
 writer = SummaryWriter('runs/combine_pipeline_carla')
@@ -29,9 +32,24 @@ writer = SummaryWriter('runs/combine_pipeline_carla')
 # CUDA
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def generate_exposures(batch_size, test_mode=False, value = 1.0):
+    exp_list = []
+    
+    if test_mode:
+        for _ in range(batch_size):
+            exp = value
+            exp_list.append([exp])
+    
+    else:
+        for _ in range(batch_size):
+            exp = random.uniform(M_exp**(-1), M_exp)
+            exp_list.append([exp])
+        
+    return torch.tensor(exp_list)
+
 def train(args):
     
-    model = torch.nn.DataParallel(CombineModel_wo_net(args))
+    model = torch.nn.DataParallel(CombineModel_wo_net(args), device_ids=[0])
     print("Parameter Count : %d" % count_parameters(model))
     
     #^Load dataloader
@@ -43,40 +61,41 @@ def train(args):
     total_steps = 0
     
     #^ Load RAFT module checkpoint
-    if args.restore_ckpt is not None:
-        assert args.restore_ckpt.endswith(".pth")
-        logging.info("Loading checkpoint...")
-        raft_checkpoint = torch.load(args.restore_ckpt)
+    # if args.restore_ckpt is not None:
+    #     assert args.restore_ckpt.endswith(".pth")
+    #     logging.info("Loading checkpoint...")
+    #     raft_checkpoint = torch.load(args.restore_ckpt)
         
-        # * downsampling = 3 case
-        if args.n_downsample == 3:
-            del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
+    #     # * downsampling = 3 case
+    #     if args.n_downsample == 3:
+    #         del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
         
-        new_raft_state_dict = {}
-        for k, v in raft_checkpoint.items():
-            if k.startswith('module.'):
-                new_k = k[7:]
-            else:
-                new_k = k
-            new_raft_state_dict[new_k] = v
+    #     new_raft_state_dict = {}
+    #     for k, v in raft_checkpoint.items():
+    #         if k.startswith('module.'):
+    #             new_k = k[7:]
+    #         else:
+    #             new_k = k
+    #         new_raft_state_dict[new_k] = v
         
-        combined_state_dict = model.state_dict()
-        count = 0
+    #     combined_state_dict = model.state_dict()
+    #     count = 0
         
-        for k in new_raft_state_dict.keys():
-            combined_keys = "module.RAFTStereo." + k
-            if combined_keys in combined_state_dict:
-                combined_state_dict[combined_keys] = new_raft_state_dict[k] 
-                count += 1
+    #     for k in new_raft_state_dict.keys():
+    #         combined_keys = "module.RAFTStereo." + k
+    #         if combined_keys in combined_state_dict:
+    #             combined_state_dict[combined_keys] = new_raft_state_dict[k] 
+    #             count += 1
         
-        model.load_state_dict(combined_state_dict)
+    #     model.load_state_dict(combined_state_dict)
                 
-        logging.info(f"Done loading checkpoint")
+    #     logging.info(f"Done loading checkpoint")
     
     # #^ Load SAEC checkpoint
-    # saec_checkpoint = torch.load('/home/user/juhyung/SAEC/checkpoints/SAEC.pth')
-    # model.load_state_dict(saec_checkpoint)
-    # logging.info(f"Done loading saec checkpoint")
+    saec_checkpoint = torch.load('/home/user/juhyung/SAEC/checkpoints/SAEC_1.pth')
+    model.load_state_dict(saec_checkpoint)
+    # print(saec_checkpoint)
+    logging.info(f"Done loading saec checkpoint")
     
     model.cuda()
     # model.train()
@@ -101,38 +120,43 @@ def train(args):
             
             assert model.training
             
-            fused_disparity, disparity1, disparity2, original_img_list, captured_rand_img_list, captured_adj_img_list, mask_list, mask_mul_list = model(left_hdr, right_hdr, iters=args.train_iters)
+            
+            exp1 = generate_exposures(left_hdr.shape[0], test_mode=True, value = 1.0)
+            exp2 = generate_exposures(left_hdr.shape[0], test_mode=True, value = 1.0)
+            fused_disparity, disparity1, disparity2, img_list, captured_rand_img_list, captured_adj_img_list, mask_list, mask_mul_list, disparity_cap = model(left_hdr, right_hdr, train_mode=True)
+            
             
             # ^ Visualize during training
             # visualize disparity 
             writer.add_image('Train/Fused_disparity', visualize_flow_cmap(fused_disparity), global_batch_num)
-            writer.add_image('Train/disparity1', visualize_flow_cmap(disparity1), global_batch_num)
-            writer.add_image('Train/disparity2', visualize_flow_cmap(disparity2), global_batch_num)
+            writer.add_image('Train/disparity1_adjusted', visualize_flow_cmap(disparity1), global_batch_num)
+            writer.add_image('Train/disparity2_adjusted', visualize_flow_cmap(disparity2), global_batch_num)
+            writer.add_image('Train/disparity1_cap', visualize_flow_cmap(disparity_cap[0]), global_batch_num)
+            writer.add_image('Train/disparity2_cap', visualize_flow_cmap(disparity_cap[1]), global_batch_num)
             writer.add_image('Train/disparity_gt', visualize_flow_cmap(disparity), global_batch_num)
             
-            # ! Add mask multiplication result
-            writer.add_image('Train/disaprity1_mul', visualize_flow_cmap(mask_mul_list[0]), global_batch_num)
-            writer.add_image('Train/disaprity2_mul', visualize_flow_cmap(mask_mul_list[1]), global_batch_num)
+            # # ! Add mask multiplication result
+            # writer.add_image('Train/disaprity1_mul', visualize_flow_cmap(mask_mul_list[0]), global_batch_num)
+            # writer.add_image('Train/disaprity2_mul', visualize_flow_cmap(mask_mul_list[1]), global_batch_num)
             
             # visualize captured image
-            writer.add_image('Captured(T)/hdr_left', original_img_list[0][0], global_batch_num)
+            writer.add_image('Captured(T)/hdr_left', img_list[0][0], global_batch_num)
             writer.add_image('Captured(T)/img1_rand_left', captured_rand_img_list[0][0], global_batch_num)
             writer.add_image('Captured(T)/img2_rand_left', captured_rand_img_list[1][0], global_batch_num)
-            
-            # visualize dynamic range
-            writer.add_image('Captured(T)/hdr_dynamic_range', visualize_dynamic_range(original_img_list[0]), global_batch_num)
-            writer.add_image('Histogram(T)/img1_dynamic_range(rand)', visualize_dynamic_range(captured_rand_img_list[0],HDR=False), global_batch_num)
-            writer.add_image('Histogram(T)/img2_dynamic_range(rand)', visualize_dynamic_range(captured_rand_img_list[1],HDR=False), global_batch_num)
-            
             # visualize adjusted image
             writer.add_image('Captured(T)/img1_adj_left', captured_adj_img_list[0][0], global_batch_num)
             writer.add_image('Captured(T)/img2_adj_left', captured_adj_img_list[1][0], global_batch_num)
             
-            writer.add_image('Captured(T)/img1_adj_mask', visualize_mask(mask_list[0]), global_batch_num)
-            writer.add_image('Captured(T)/img2_adj_mask', visualize_mask(mask_list[1]), global_batch_num)
+            # visualize dynamic range
+            # writer.add_image('Captured(T)/hdr_dynamic_range', visualize_dynamic_range(original_img_list[0]), global_batch_num)
+            # writer.add_image('Histogram(T)/img1_dynamic_range(rand)', visualize_dynamic_range(captured_rand_img_list[0],HDR=False), global_batch_num)
+            # writer.add_image('Histogram(T)/img2_dynamic_range(rand)', visualize_dynamic_range(captured_rand_img_list[1],HDR=False), global_batch_num)
             
-            writer.add_image('Histogram(T)/img1_dynamic_range(adj)', visualize_dynamic_range(captured_adj_img_list[0], HDR=False), global_batch_num)
-            writer.add_image('Histogram(T)/img2_dynamic_range(adj)', visualize_dynamic_range(captured_adj_img_list[1], HDR=False), global_batch_num)
+            # writer.add_image('Captured(T)/img1_adj_mask', visualize_mask(mask_list[0]), global_batch_num)
+            # writer.add_image('Captured(T)/img2_adj_mask', visualize_mask(mask_list[1]), global_batch_num)
+            
+            # writer.add_image('Histogram(T)/img1_dynamic_range(adj)', visualize_dynamic_range(captured_adj_img_list[0], HDR=False), global_batch_num)
+            # writer.add_image('Histogram(T)/img2_dynamic_range(adj)', visualize_dynamic_range(captured_adj_img_list[1], HDR=False), global_batch_num)
     
             assert model.training
             
@@ -141,7 +165,6 @@ def train(args):
             valid_mask = valid_mask.unsqueeze(1)
             
             #^mask visualize to check loss calculation
-            
             disparity_loss = criterion(fused_disparity[valid_mask], disparity[valid_mask])
             total_loss = disparity_loss
             
@@ -149,48 +172,53 @@ def train(args):
             global_batch_num += 1        
             # total_loss.backward()
             # optimizer.step()
+            # * Test Long sequence
+            print("============================")
+            print("=====Test Long sequence=====")
+            print("============================")
+            validate_carla_longsequence(model.module)
             
-            # Todo) Validation code 수정
-            if total_steps % validation_frequency == validation_frequency - 1:
-                print("=====Validation=====")
-                valid_num = (total_steps / validation_frequency) * 10 + 1
-                # * Save validation checkpoint
-                # save_path = Path('checkpoints/%d_%s.pth' % (total_steps + 1, args.name))
-                # logging.info(f"Saving file {save_path.absolute()}")
-                # torch.save(model.state_dict(), save_path)
+            # # Todo) Validation code 수정
+            # if total_steps % validation_frequency == validation_frequency - 1:
+            #     print("=====Validation=====")
+            #     valid_num = (total_steps / validation_frequency) * 10 + 1
+            #     # * Save validation checkpoint
+            #     # save_path = Path('checkpoints/%d_%s.pth' % (total_steps + 1, args.name))
+            #     # logging.info(f"Saving file {save_path.absolute()}")
+            #     # torch.save(model.state_dict(), save_path)
 
-                valid_loss, valid_d1, valid_fused_disparity, valid_disparity1, valid_disparity2, valid_origin_list, valid_rand_img_list, valid_captured_img_list, valid_disparity_gt, disp_rand1, disp_rand2, mask_list_val, mask_mul_list_val = validate_carla(model.module, iters=32)
+            #     valid_loss, valid_d1, valid_fused_disparity, valid_disparity1, valid_disparity2, valid_origin_list, valid_rand_img_list, valid_captured_img_list, valid_disparity_gt, disp_rand1, disp_rand2, mask_list_val, mask_mul_list_val = validate_carla(model.module, iters=32)
                 
-                model.train()
-                model.module.RAFTStereo.freeze_bn() # 수정
+            #     model.train()
+            #     model.module.RAFTStereo.freeze_bn() # 수정
                 
-                # Valid disparity map logging
-                writer.add_image('Valid/Fused_disparity', visualize_flow_cmap(valid_fused_disparity), valid_num)
-                writer.add_image('Valid/disparity1', visualize_flow_cmap(valid_disparity1), valid_num)
-                writer.add_image('Valid/disparity2', visualize_flow_cmap(valid_disparity2), valid_num)
+            #     # Valid disparity map logging
+            #     writer.add_image('Valid/Fused_disparity', visualize_flow_cmap(valid_fused_disparity), valid_num)
+            #     writer.add_image('Valid/disparity1', visualize_flow_cmap(valid_disparity1), valid_num)
+            #     writer.add_image('Valid/disparity2', visualize_flow_cmap(valid_disparity2), valid_num)
                 
-                writer.add_image('Valid/disparity1_rand', visualize_flow_cmap(disp_rand1), valid_num)
-                writer.add_image('Valid/disparity2_rand', visualize_flow_cmap(disp_rand2), valid_num)
+            #     writer.add_image('Valid/disparity1_rand', visualize_flow_cmap(disp_rand1), valid_num)
+            #     writer.add_image('Valid/disparity2_rand', visualize_flow_cmap(disp_rand2), valid_num)
                 
-                writer.add_image('Valid/disparity1_mul', visualize_flow_cmap(mask_mul_list_val[0]), valid_num)
-                writer.add_image('Valid/disparity2_mul', visualize_flow_cmap(mask_mul_list_val[1]), valid_num)
+            #     writer.add_image('Valid/disparity1_mul', visualize_flow_cmap(mask_mul_list_val[0]), valid_num)
+            #     writer.add_image('Valid/disparity2_mul', visualize_flow_cmap(mask_mul_list_val[1]), valid_num)
                 
-                writer.add_image('Valid/disparity_gt',visualize_flow_cmap(valid_disparity_gt), valid_num)
-                writer.add_scalar('Valid_loss', valid_loss.item(), valid_num)
-                writer.add_scalar('Valid_d1',valid_d1.item(), valid_num)
+            #     writer.add_image('Valid/disparity_gt',visualize_flow_cmap(valid_disparity_gt), valid_num)
+            #     writer.add_scalar('Valid_loss', valid_loss.item(), valid_num)
+            #     writer.add_scalar('Valid_d1',valid_d1.item(), valid_num)
                 
-                # Simulated Captured image logging
-                writer.add_image('Captured(V)/hdr_left', valid_origin_list[0][0], global_batch_num)
-                writer.add_image('Captured(V)/img1_rand_left', valid_rand_img_list[0][0], global_batch_num)
-                writer.add_image('Captured(V)/img2_rand_left', valid_rand_img_list[1][0], global_batch_num)
-                writer.add_image('Captured(V)/img1_adj_left', valid_captured_img_list[0][0], global_batch_num)
-                writer.add_image('Captured(V)/img2_adj_left', valid_captured_img_list[1][0], global_batch_num)
+            #     # Simulated Captured image logging
+            #     writer.add_image('Captured(V)/hdr_left', valid_origin_list[0][0], global_batch_num)
+            #     writer.add_image('Captured(V)/img1_rand_left', valid_rand_img_list[0][0], global_batch_num)
+            #     writer.add_image('Captured(V)/img2_rand_left', valid_rand_img_list[1][0], global_batch_num)
+            #     writer.add_image('Captured(V)/img1_adj_left', valid_captured_img_list[0][0], global_batch_num)
+            #     writer.add_image('Captured(V)/img2_adj_left', valid_captured_img_list[1][0], global_batch_num)
                 
-                # writer.add_image('Histogram(V)/hdr_dynamic_range', visualize_dynamic_range(valid_origin_list[0]), global_batch_num)
-                # writer.add_image('Histogram(V)/img1_dynamic_range(rand)', visualize_dynamic_range(valid_rand_img_list[0], HDR=False), global_batch_num)
+            #     # writer.add_image('Histogram(V)/hdr_dynamic_range', visualize_dynamic_range(valid_origin_list[0]), global_batch_num)
+            #     # writer.add_image('Histogram(V)/img1_dynamic_range(rand)', visualize_dynamic_range(valid_rand_img_list[0], HDR=False), global_batch_num)
                 
-                # writer.add_image('Histogram(V)/img1_dynamic_range(adj)', visualize_dynamic_range(valid_captured_img_list[0],HDR=False), global_batch_num)
-                # writer.add_image('Histogram(V)/img2_dynamic_range(adj)', visualize_dynamic_range(valid_captured_img_list[1],HDR=False), global_batch_num)
+            #     # writer.add_image('Histogram(V)/img1_dynamic_range(adj)', visualize_dynamic_range(valid_captured_img_list[0],HDR=False), global_batch_num)
+            #     # writer.add_image('Histogram(V)/img2_dynamic_range(adj)', visualize_dynamic_range(valid_captured_img_list[1],HDR=False), global_batch_num)
                 
             total_steps += 1
 

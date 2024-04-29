@@ -8,6 +8,7 @@ import glob
 import re
 import io
 from torchvision.transforms.functional import to_tensor
+from core.saec import calculate_histogram_global
 
 ###############################################
 # * Visualize code for tensorboard logging
@@ -54,6 +55,19 @@ def visualize_flow_cmap(batch_image):
     colored_image = np.transpose(colored_image, (2,0,1))
     
     return colored_image
+
+def save_image(image_tensor, filename):
+    image = np.transpose(image_tensor, (1,2,0))
+    im = Image.fromarray(image)
+    im.save(filename)
+
+def save_image_255(image_tensor, filename):
+    image = image_tensor.cpu().permute(1,2,0)
+    image = torch.clamp(image * 255, 0, 255)
+    image = image.numpy().astype(np.uint8)
+    image = Image.fromarray(image)
+    image.save(filename)
+
 
 # * Visualization prediciton depth map with color map
 def visualize_flow_cmap_with_colorbar(batch_image,  figsize=(16, 10), dpi=100, colorbar_length=0.75, colorbar_aspect=20):
@@ -235,3 +249,22 @@ def visualize_dynamic_range_entropy(batch_image, HDR = True):
     image_tensor = to_tensor(image)
     
     return image_tensor
+
+# * Histogram visualize for tensorboard logging as image file
+def visualize_histogram(img):
+    histo = calculate_histogram_global(img)
+    values = histo[0][0].cpu().numpy()
+    frequency = np.arange(len(values))
+    fig = plt.figure(figsize=(10,8))
+    plt.bar(frequency, values, width=2.0)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of green channel intensity')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='jpeg')
+    buf.seek(0)
+    image = Image.open(buf)
+    image = np.array(image)
+    
+    return image

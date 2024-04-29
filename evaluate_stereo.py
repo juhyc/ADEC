@@ -13,8 +13,13 @@ import core.stereo_datasets as datasets
 from core.utils.utils import InputPadder
 from core.utils.simulate import *
 from core.loss import *
-
+from core.utils.display import *
+from torch.utils.tensorboard import SummaryWriter
 import core.stereo_datasets2 as datasets2
+
+###############################################
+# * For validate pipeline
+###############################################
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -237,6 +242,55 @@ def validate_carla(model, iters=32, mixed_prec=False):
     print(f"Validation CARLA : Loss {loss_mean}, D1 {d1}, EPE {epe}")
     
     return loss_mean, d1, fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, flow_gt, disp_rand1, disp_rand2, mask_list, mask_mul_list
+
+eval_writer = SummaryWriter('runs/evaluation_longsequence')
+
+@torch.no_grad()
+def validate_carla_longsequence(model, iters=32, mixed_prec=False):
+    """Perform validation using the CARLA synthetic dataset"""
+    model.eval()
+    val_dataset = datasets2.CARLA(image_set='validate')
+    torch.backends.cudnn.benchmark = True
+    num_cnt = 0
+    
+    for val_id in range(len(val_dataset)):
+        _, image1, image2, flow_gt, _ = val_dataset[val_id]
+        image1 = image1[None].cuda()
+        image2 = image2[None].cuda()
+        
+        padder = InputPadder(image1.shape, divis_by = 32)
+        image1, image2 = padder.pad(image1, image2)
+        
+        with autocast(enabled=mixed_prec):
+            start = time.time()
+            fused_disp, disp1, disp2, origin_img_list, cap_rand_img_list, cap_adj_img_list, disp_cap= model(image1, image2, iters=iters, test_mode=True)
+            end = time.time()
+            
+        fused_disp= padder.unpad(fused_disp).cpu().squeeze(0)
+
+        eval_writer.add_image('Demo/Fused_disparity', visualize_flow_cmap(fused_disp), num_cnt)
+        eval_writer.add_image('Demo/disp1', visualize_flow_cmap(disp1),num_cnt)
+        eval_writer.add_image('Demo/disp2', visualize_flow_cmap(disp2),num_cnt)  
+        eval_writer.add_image('Demo/disp1_r', visualize_flow_cmap(disp_cap[0]),num_cnt)
+        eval_writer.add_image('Demo/disp2_r', visualize_flow_cmap(disp_cap[1]),num_cnt)
+        eval_writer.add_image('Demo/gt', visualize_flow_cmap(flow_gt), num_cnt)
+        eval_writer.add_image('Demo/hdr_left', origin_img_list[0][0], num_cnt)
+        eval_writer.add_image('Demo/img1_rand_left', cap_rand_img_list[0][0], num_cnt)
+        eval_writer.add_image('Demo/img2_rand_left', cap_rand_img_list[1][0], num_cnt)
+        eval_writer.add_image('Demo/img1_adj_left', cap_adj_img_list[0][0], num_cnt)
+        eval_writer.add_image('Demo/img2_adj_left', cap_adj_img_list[1][0], num_cnt)
+        
+        print(cap_adj_img_list[1][0].shape)
+        print(cap_adj_img_list[1][0])
+        
+        save_image(visualize_flow_cmap(fused_disp), f'Demo/fused_disp/fused_disp_{num_cnt}.png')
+        save_image(visualize_flow_cmap(disp_cap[1]), f'Demo/disp_cap2/disp_cap2_{num_cnt}.png')
+        save_image(visualize_flow_cmap(flow_gt), f'Demo/gt/gt_{num_cnt}.png')
+        
+        save_image_255(cap_adj_img_list[0][0], f'Demo/cap_rand1/cap_rand1_{num_cnt}.png')
+        save_image_255(cap_adj_img_list[1][0], f'Demo/cap_rand2/cap_rand2_{num_cnt}.png')
+        
+        num_cnt += 1
 
 
 @torch.no_grad()

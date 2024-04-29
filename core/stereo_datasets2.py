@@ -13,10 +13,15 @@ import cv2
 import logging
 import numpy as np
 from glob import glob
+import re
 
 ###############################################
 # * Dataset class for synthetic CARLA dataset
 ###############################################
+
+def sort_key_func(file):
+    numbers = re.findall(r'\d+', os.path.basename(file))
+    return int(numbers[0]) if numbers else 0
 
 class StereoDataset(data.Dataset):
     def __init__(self,  reader = None):
@@ -109,24 +114,24 @@ class CARLA(StereoDataset):
             # disp_list = [os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')]
             
             # * For Full sequence image
-            # experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))        
-            # for experiment_folder in experiment_folders:
-            #     image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
-            #     image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
-            #     disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')))
+            experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment33')))        
+            for experiment_folder in experiment_folders:
+                image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')), key=sort_key_func)
+                image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')), key=sort_key_func)
+                disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')), key=sort_key_func)
                 
             # * For first sequence image
-            experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))
-            for experiment_folder in experiment_folders:
-                hdr_left_files = sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
-                if hdr_left_files:  
-                    image1_list.append(hdr_left_files[0])  
-                hdr_right_files = sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
-                if hdr_right_files:
-                    image2_list.append(hdr_right_files[0])
-                disp_files = sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')))
-                if disp_files:
-                    disp_list.append(disp_files[0])
+            # experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))
+            # for experiment_folder in experiment_folders:
+            #     hdr_left_files = sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
+            #     if hdr_left_files:  
+            #         image1_list.append(hdr_left_files[0])  
+            #     hdr_right_files = sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
+            #     if hdr_right_files:
+            #         image2_list.append(hdr_right_files[0])
+            #     disp_files = sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')))
+            #     if disp_files:
+            #         disp_list.append(disp_files[0])
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
             self.image_list += [[img1, img2]]
@@ -138,14 +143,17 @@ def fetch_dataloader(args):
     
     for dataset_name in args.train_datasets:
         if dataset_name.startswith('carla'):
+            # Todo) set shuffle variable if carla dataset is test or validation
             new_dataset = CARLA()
             print(f"Samples : {len(new_dataset)}")
             logging.info(f"Adding {len(new_dataset)} samples from CARLA")
     
     train_dataset = new_dataset if train_dataset is None else train_dataset + new_dataset  
-            
+    
+    #! 4/10
+    #! Edit shutt = False to check image formation steps
     train_loader = data.DataLoader(train_dataset, batch_size=args.batch_size, 
-                                   pin_memory=True, shuffle=True, num_workers=int(os.environ.get('SLURM_CPUS_PER_TASK', 6))-2, drop_last=True)
+                                   pin_memory=True, shuffle=False, num_workers=int(os.environ.get('SLURM_CPUS_PER_TASK', 6))-2, drop_last=False)
     
     logging.info('Training with %d image pairs' % len(train_dataset))
     return train_loader
