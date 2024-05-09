@@ -16,7 +16,7 @@ from glob import glob
 import re
 
 ###############################################
-# * Dataset class for synthetic CARLA dataset
+# * Dataset class for synthetic CARLA dataset considering sequence
 ###############################################
 
 def sort_key_func(file):
@@ -48,26 +48,33 @@ class StereoDataset(data.Dataset):
             img2 = torch.from_numpy(img2).permute(2,0,1).float()
             return img1,img2, self.extra_info[index]
         
-        index = index % len(self.image_list)
-        disp = self.disparity_reader(self.disparity_list[index])
-        
-        if isinstance(disp, tuple):
-            disp, valid = disp
-        else:
-            valid = disp < 512
+        #* Adjust index not to exceed last frame
+        if index >= len(self.image_list) - 1:
+            # Use up to the second to last frame
+            index = len(self.image_list) - 2
             
-        img1 = read_gen(self.image_list[index][0])
-        img2 = read_gen(self.image_list[index][1])
+        current_frame = self.image_list[index]
+        next_frame = self.image_list[index+1]
+        current_disp = self.disparity_reader(self.disparity_list[index])
         
-        img1 = np.array(img1)
-        img2 = np.array(img2)
+        if isinstance(current_disp, tuple):
+            current_disp, valid = current_disp
+        else:
+            valid = current_disp < 512
         
-        disp = np.array(disp).astype(np.float32)
+        #* Load image and disparity map as numpy array
+        img1 = np.array(read_gen(current_frame[0]))
+        img2 = np.array(read_gen(current_frame[1]))
+        img1_next = np.array(read_gen(next_frame[0]))
+        img2_next = np.array(read_gen(next_frame[1]))
+        disp = np.array(current_disp).astype(np.float32)
         
         # # ! Add resizing
         height, width = img1.shape[1], img1.shape[0]
         img1 = cv2.resize(img1, (height//2, width//2))
         img2 = cv2.resize(img2, (height//2, width//2))
+        img1_next = cv2.resize(img1_next, (height//2, width//2))
+        img2_next = cv2.resize(img2_next, (height//2, width//2))
         disp = cv2.resize(disp, (height//2, width//2))
         disp = disp/2
         
@@ -75,13 +82,15 @@ class StereoDataset(data.Dataset):
         
         img1 = torch.from_numpy(img1).permute(2,0,1).float()
         img2 = torch.from_numpy(img2).permute(2,0,1).float()
+        img1_next = torch.from_numpy(img1_next).permute(2,0,1).float()
+        img2_next = torch.from_numpy(img2_next).permute(2,0,1).float()
         flow = torch.from_numpy(flow).permute(2,0,1).float()
         
         valid = (flow[0].abs() < 512) & (flow[1].abs() < 512)
             
         flow = flow[:1]
         
-        return self.image_list[index] + [self.disparity_list[index]], img1, img2, flow, valid.float()
+        return self.image_list[index] + [self.disparity_list[index]], img1, img2, img1_next, img2_next, flow, valid.float()
     
     def __len__(self):
         return len(self.image_list)
@@ -100,38 +109,26 @@ class CARLA(StereoDataset):
         if image_set == 'training':
             experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))                
             for experiment_folder in experiment_folders:
-                image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
-                image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
-                disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')))
+                image1_files = sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
+                image2_files = sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
+                disp_files = sorted(glob(os.path.join(experiment_folder,'ground_truth_disparity_left/*.npy')))
+
+                image1_list.extend(image1_files)
+                image2_list.extend(image2_files)
+                disp_list.extend(disp_files)
         else:
             # Validation set
             image_set = 'test'
-            
-            # * For Single image         
-            # experiment_folders = os.path.join(root, image_set, 'Valid')
-            # image1_list = [os.path.join(experiment_folder, 'hdr_left/*.hdr')]
-            # image2_list = [os.path.join(experiment_folder, 'hdr_right/*.hdr')]
-            # disp_list = [os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')]
-            
             # * For Full sequence image
             experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment34')))        
             for experiment_folder in experiment_folders:
-                image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')), key=sort_key_func)
-                image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')), key=sort_key_func)
-                disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')), key=sort_key_func)
+                image1_files += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')), key=sort_key_func)
+                image2_files += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')), key=sort_key_func)
+                disp_files += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')), key=sort_key_func)
                 
-            # * For first sequence image
-            # experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))
-            # for experiment_folder in experiment_folders:
-            #     hdr_left_files = sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
-            #     if hdr_left_files:  
-            #         image1_list.append(hdr_left_files[0])  
-            #     hdr_right_files = sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
-            #     if hdr_right_files:
-            #         image2_list.append(hdr_right_files[0])
-            #     disp_files = sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')))
-            #     if disp_files:
-            #         disp_list.append(disp_files[0])
+                image1_list.extend(image1_files)
+                image2_list.extend(image2_files)
+                disp_list.extend(disp_files)
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
             self.image_list += [[img1, img2]]
@@ -143,15 +140,12 @@ def fetch_dataloader(args):
     
     for dataset_name in args.train_datasets:
         if dataset_name.startswith('carla'):
-            # Todo) set shuffle variable if carla dataset is test or validation
             new_dataset = CARLA()
             print(f"Samples : {len(new_dataset)}")
             logging.info(f"Adding {len(new_dataset)} samples from CARLA")
     
     train_dataset = new_dataset if train_dataset is None else train_dataset + new_dataset  
     
-    #! 4/10
-    #! Edit shutt = False to check image formation steps
     train_loader = data.DataLoader(train_dataset, batch_size=args.batch_size, 
                                    pin_memory=True, shuffle=False, num_workers=int(os.environ.get('SLURM_CPUS_PER_TASK', 6))-2, drop_last=False)
     

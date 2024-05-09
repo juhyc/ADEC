@@ -85,8 +85,8 @@ class CombineModel_wo_net(nn.Module):
         super().__init__()
         self.args = args
         self.RAFTStereo = RAFTStereo(args)
-        self.initial_exp_high = torch.tensor([1.2], dtype=torch.float32)
-        self.initial_exp_low = torch.tensor([1.2], dtype=torch.float32)
+        self.initial_exp_high = torch.tensor([1.3], dtype=torch.float32)
+        self.initial_exp_low = torch.tensor([1.3], dtype=torch.float32)
         
     def convert_to_tensor(self, image):
         if isinstance(image, Image.Image):
@@ -141,11 +141,13 @@ class CombineModel_wo_net(nn.Module):
         shifted_exp_f1, shifted_exp_f2 = batch_exp_adjustment(e_rand_high_pair, e_rand_low_pair, saturation_level_f1, saturation_level_f2)
         print(f"shifted_exp_f1 : {shifted_exp_f1}")
         print(f"shifted_exp_f2 : {shifted_exp_f2}")
-        # Save shifted exposure
+        
+        # # * Save shifted exposure
         # self.initial_exp_high = shifted_exp_f1
         # self.initial_exp_low = shifted_exp_f2
         
-        shifted_exp_f1, shifted_exp_f2 = self.initial_exp_high, self.initial_exp_low
+        # * For fixed Expsoure
+        # shifted_exp_f1, shifted_exp_f2 = self.initial_exp_high, self.initial_exp_low
         
         # tensorboard logging histogram        
         #################################################CHANGED###################################################
@@ -181,7 +183,7 @@ class CombineModel_wo_net(nn.Module):
         # * For exposure shift check [HDR, LDR_rand, LDR_adjust]
         original_img_list = [left_hdr]
         captured_rand_img_list = [ldr_left_exph_cap, ldr_left_expl_cap]
-        captured_adj_img_list = [left_ldr_adj_exph, left_ldr_adj_expl]
+        captured_adj_img_list = [left_ldr_adj_exph, left_ldr_adj_expl, right_ldr_adj_exph, right_ldr_adj_expl]
         mask_list = [mask_exph, mask_expl]
         disparity_list = [disparity_cap_exph[-1], disparity_cap_expl[-1]]
         

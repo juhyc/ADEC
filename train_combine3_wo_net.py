@@ -172,11 +172,11 @@ def train(args):
             global_batch_num += 1        
             # total_loss.backward()
             # optimizer.step()
-            # * Test Long sequence
-            print("============================")
-            print("=====Test Long sequence=====")
-            print("============================")
-            validate_carla_longsequence(model.module)
+            # # * Test Long sequence
+            # print("============================")
+            # print("=====Test Long sequence=====")
+            # print("============================")
+            # validate_carla_longsequence(model.module)
             
             # # Todo) Validation code 수정
             # if total_steps % validation_frequency == validation_frequency - 1:

@@ -85,8 +85,8 @@ def sequence_loss_valid(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700
         adjusted_loss_gamma = loss_gamma**(15/(n_predictions - 1))
         i_weight = adjusted_loss_gamma**(n_predictions - i - 1)
         
-        print("크기체크2")
-        print(flow_preds[i].shape, flow_gt.shape)
+        # print("크기체크2")
+        # print(flow_preds[i].shape, flow_gt.shape)
         
         i_loss = (flow_preds[i] - flow_gt).abs()
         assert i_loss.shape == valid.shape, [i_loss.shape, valid.shape, flow_gt.shape, flow_preds[i].shape]
@@ -261,6 +261,11 @@ def validate_carla_longsequence(model, iters=32, mixed_prec=False):
         padder = InputPadder(image1.shape, divis_by = 32)
         image1, image2 = padder.pad(image1, image2)
         
+        
+        # ! For testing hdr intensity 
+        # image1 = image1 * 10
+        # image2 = image2 * 10
+        
         with autocast(enabled=mixed_prec):
             start = time.time()
             fused_disp, disp1, disp2, origin_img_list, cap_rand_img_list, cap_adj_img_list, disp_cap= model(image1, image2, iters=iters, test_mode=True)
@@ -280,8 +285,8 @@ def validate_carla_longsequence(model, iters=32, mixed_prec=False):
         eval_writer.add_image('Demo/img1_adj_left', cap_adj_img_list[0][0], num_cnt)
         eval_writer.add_image('Demo/img2_adj_left', cap_adj_img_list[1][0], num_cnt)
         
-        print(cap_adj_img_list[1][0].shape)
-        print(cap_adj_img_list[1][0])
+        # print(cap_adj_img_list[1][0].shape)
+        # print(cap_adj_img_list[1][0])
         
         save_image(visualize_flow_cmap(fused_disp), f'Demo/fused_disp/fused_disp_{num_cnt}.png')
         save_image(visualize_flow_cmap(disp_cap[1]), f'Demo/disp_cap2/disp_cap2_{num_cnt}.png')
@@ -289,6 +294,8 @@ def validate_carla_longsequence(model, iters=32, mixed_prec=False):
         
         save_image_255(cap_adj_img_list[0][0], f'Demo/cap_rand1/cap_rand1_{num_cnt}.png')
         save_image_255(cap_adj_img_list[1][0], f'Demo/cap_rand2/cap_rand2_{num_cnt}.png')
+        save_image_255(cap_adj_img_list[2][0], f'Demo/cap_rand1_R/cap_rand1_R_{num_cnt}.png')
+        save_image_255(cap_adj_img_list[3][0], f'Demo/cap_rand2_R/cap_rand2_R_{num_cnt}.png')
         
         num_cnt += 1
 
