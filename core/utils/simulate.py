@@ -247,6 +247,17 @@ class ImageFormation:
         img_denormalized = img_denormalized / exp
         
         return img_denormalized
+    
+    def quantize_tensor(self, x , n = 8):
+        max_val = 2**n - 1
+        
+        x_scaled = x*max_val
+        
+        x_clamped = torch.clamp(x_scaled, 0, max_val)
+        
+        x_quantized = torch.round(x_clamped)
+        
+        return x_quantized/max_val
         
     def noise_modeling(self, iso = float(100.)):
         """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
@@ -288,29 +299,4 @@ class ImageFormation:
         return noise_ldr
     
     
-    # * Calculate PSNR
-    def calculate_psnr(original_image, processed_image, n = 8):
-        """
-        Calculate psnr between original image and processed image
 
-        Parameters:
-        original_image (numpy.ndarray)
-        processed_image (numpy.ndarray): 
-
-        Returns:
-        float: calculated PSNR value (dB).
-        """
-        # MSE (Mean Squared Error)
-        mse = torch.mean((original_image - processed_image) ** 2)
-        
-        if mse == 0:
-            # MSE = 0 both orignal image and processed image are same
-            return float('inf')
-        
-        # max pixel value ex) 8bit
-        max_pixel = 2**n -1
-        
-        # PSNR
-        psnr = 20 * torch.log10(max_pixel / torch.sqrt(mse))
-
-        return psnr
