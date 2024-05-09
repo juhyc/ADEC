@@ -26,32 +26,6 @@ DEVICE = 'cuda'
 # * End to end pipeline with exposure control not utilize network
 ################################
 
-# * Calculate PSNR
-def calculate_psnr(original_image, processed_image, n = 8):
-    """
-    Calculate psnr between original image and processed image
-
-    Parameters:
-    original_image (numpy.ndarray)
-    processed_image (numpy.ndarray): 
-
-    Returns:
-    float: calculated PSNR value (dB).
-    """
-    # MSE (Mean Squared Error)
-    mse = torch.mean((original_image - processed_image) ** 2)
-    
-    if mse == 0:
-        # MSE = 0 both orignal image and processed image are same
-        return float('inf')
-    
-    # max pixel value ex) 8bit
-    max_pixel = 2**n -1
-    
-    # PSNR
-    psnr = 20 * torch.log10(max_pixel / torch.sqrt(mse))
-
-    return psnr
 
 def load_image(imfile):
     img = np.array(imfile).astype(np.uint8)
@@ -68,6 +42,7 @@ class QuantizeSTE(torch.autograd.Function):
         # Quantize
         x_scaled = input * max_val
         x_clamped = torch.clamp(x_scaled, 0, max_val)
+        
         x_quantized = torch.round(x_clamped).to(torch.uint8)
         
         # Normalized to 0~1
@@ -98,6 +73,7 @@ class CombineModel_wo_net(nn.Module):
     def forward(self, left_hdr, right_hdr, iters=32, flow_init=None, valid_mode = False, test_mode=False, train_mode=False):
         
         #^ Simulator Module HDR -> LDR
+
         # initial random exposure for training
         if train_mode:
             e_rand_high_pair = generate_random_exposures(left_hdr.shape[0], valid_mode=True, value=1.3)
@@ -122,6 +98,7 @@ class CombineModel_wo_net(nn.Module):
         ldr_left_expl_cap = QuantizeSTE.apply(phi_l_expl.noise_modeling(), 8)
         ldr_right_expl_cap = QuantizeSTE.apply(phi_r_expl.noise_modeling(), 8)
         
+
         # * Calculate frame 1,2 histogram 
         histo_ldr1 = calculate_histogram_global(ldr_left_exph_cap)
         histo_ldr2 = calculate_histogram_global(ldr_left_expl_cap)   
@@ -145,6 +122,7 @@ class CombineModel_wo_net(nn.Module):
         # # * Save shifted exposure
         # self.initial_exp_high = shifted_exp_f1
         # self.initial_exp_low = shifted_exp_f2
+
         
         # * For fixed Expsoure
         # shifted_exp_f1, shifted_exp_f2 = self.initial_exp_high, self.initial_exp_low
@@ -156,6 +134,7 @@ class CombineModel_wo_net(nn.Module):
         print(f"Random exp_l : {e_rand_high_pair[0].item():4f}, Random exp_r : {e_rand_low_pair[0].item():4f}")
         print("=====Shifted exp values=====")
         print(f"shifted_exp_l : {shifted_exp_f1[0].item():4f}, shifted_exp_r : {shifted_exp_f2[0].item():4f}")
+
         ##############################################################################################################
         
         #^ Simulate Image LDR with shifted exposure value
@@ -168,7 +147,7 @@ class CombineModel_wo_net(nn.Module):
         right_ldr_adj_exph = QuantizeSTE.apply(phi_hat_r_exph.noise_modeling(), 8)
         left_ldr_adj_expl = QuantizeSTE.apply(phi_hat_l_expl.noise_modeling(), 8)
         right_ldr_adj_expl = QuantizeSTE.apply(phi_hat_r_expl.noise_modeling(), 8)
-        
+       
         # ^ Create exposure mask 
         mask_exph = soft_binary_threshold_batch(left_ldr_adj_exph)
         mask_expl = soft_binary_threshold_batch(left_ldr_adj_expl)
@@ -193,6 +172,7 @@ class CombineModel_wo_net(nn.Module):
         mask_expl = mask_expl + epsilon
         disparity_exph_mul = disparity_exph[-1] * mask_exph 
         disparity_expl_mul = disparity_expl[-1] * mask_expl 
+
         fused_disparity_mul = (disparity_exph_mul + disparity_expl_mul)/(mask_exph + mask_expl)
         # adjsut nan, inf value 
         fused_disparity = torch.nan_to_num(fused_disparity_mul, nan = 0.0, posinf=0.0, neginf=0.0)       

@@ -154,6 +154,7 @@ def calculate_exposure_adjustment(histogram, low_threshold=5, high_threshold=250
 
     return low_exposure_ratio, high_exposure_ratio
 
+
 # Todo) calculate batch histogram saturation level based on skewness value
 def calculate_batch_histogram_exposure(skewness_level, batch_histograms, symmetric_threshold = 0.5, low_threshold=0.14, high_threshold=0.73):
     
@@ -196,42 +197,6 @@ def calculate_batch_histogram_exposure(skewness_level, batch_histograms, symmetr
         
     return torch.tensor(batch_saturation_level)
 
-# def batch_exp_adjustment(batch_exp, batch_saturation_level):
-#     exp_base_next = torch.zeros_like(batch_exp)
-#     shifted_exp_f1 = torch.zeros_like(batch_exp)
-#     shifted_exp_f2 = torch.zeros_like(batch_exp)
-    
-#     for i in range(batch_exp.size(0)):
-#         exp_base = batch_exp[i]
-#         sat_level = batch_saturation_level[i] # [-x.x -0.5, 0. 0.5, 1.xx]
-        
-#         if sat_level < -0.5: # under
-#             shifted_exp_f1[i] =  exposure_shift(exp_base, decrease=False)
-#             shifted_exp_f2[i] =  exposure_shift(exp_base, alpha=0.1, decrease=True)
-#             exp_base_next[i] = shifted_exp_f1[i]
-        
-#         if sat_level > 0.5: # over
-#             shifted_exp_f1[i] = exposure_shift(exp_base, decrease=True)
-#             shifted_exp_f2[i] = exposure_shift(exp_base, alpha=0.1, decrease=False)
-#             exp_base_next[i] = shifted_exp_f1[i]
-        
-#         if sat_level == 0: # appro
-#             shifted_exp_f1[i] = exposure_shift(exp_base, decrease=False)
-#             shifted_exp_f2[i] = exposure_shift(exp_base, decrease=True)
-#             exp_base_next[i] = 0.5 *shifted_exp_f1[i] + 0.5 * shifted_exp_f2[i]
-        
-#         if sat_level == -0.5: # both, close to under
-#             shifted_exp_f1[i] = exposure_shift(exp_base, decrease=True)
-#             shifted_exp_f2[i] = exposure_shift(exp_base, decrease=False)
-#             exp_base_next[i] = 0.3 * shifted_exp_f1[i] + 0.7 * shifted_exp_f2[i]
-
-#         if sat_level == 0.5: # both, close to over
-#             shifted_exp_f1[i] = exposure_shift(exp_base, decrease=True)
-#             shifted_exp_f2[i] = exposure_shift(exp_base, decrease=False)
-#             exp_base_next[i] = 0.7 * shifted_exp_f1[i] + 0.3 * shifted_exp_f2[i]
-
-#     return shifted_exp_f1, shifted_exp_f2, exp_base_next
-
 # * For batch histograms
 def calculate_batch_exposure_adjustment(batch_histograms, low_threshold=5, high_threshold=250):
     batch_exp_saturation_level = []
@@ -248,7 +213,9 @@ def calculate_batch_exposure_adjustment(batch_histograms, low_threshold=5, high_
 
     return torch.tensor(batch_exp_saturation_level).unsqueeze(-1)
 
+
 # Todo_04.23) Modify eposure adjustment by 3x3 criteria
+
 def batch_exp_adjustment(batch_exp_f1, batch_exp_f2, batch_saturation_level_f1, batch_saturation_level_f2):
     shifted_exp_f1 = torch.zeros_like(batch_exp_f1)
     shifted_exp_f2 = torch.zeros_like(batch_exp_f2)
@@ -308,7 +275,9 @@ def batch_exp_adjustment(batch_exp_f1, batch_exp_f2, batch_saturation_level_f1, 
 
     return shifted_exp_f1, shifted_exp_f2
 
-def exposure_shift(exp, alpha = 0.4, decrease=False):
+
+
+def exposure_shift(exp, alpha = 0.3, decrease=False):
     if decrease:
         shifted_exp = exp - (alpha * exp)
     else:
