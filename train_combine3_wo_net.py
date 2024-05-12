@@ -61,41 +61,41 @@ def train(args):
     total_steps = 0
     
     #^ Load RAFT module checkpoint
-    # if args.restore_ckpt is not None:
-    #     assert args.restore_ckpt.endswith(".pth")
-    #     logging.info("Loading checkpoint...")
-    #     raft_checkpoint = torch.load(args.restore_ckpt)
+    if args.restore_ckpt is not None:
+        assert args.restore_ckpt.endswith(".pth")
+        logging.info("Loading checkpoint...")
+        raft_checkpoint = torch.load(args.restore_ckpt)
         
-    #     # * downsampling = 3 case
-    #     if args.n_downsample == 3:
-    #         del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
+        # * downsampling = 3 case
+        if args.n_downsample == 3:
+            del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
         
-    #     new_raft_state_dict = {}
-    #     for k, v in raft_checkpoint.items():
-    #         if k.startswith('module.'):
-    #             new_k = k[7:]
-    #         else:
-    #             new_k = k
-    #         new_raft_state_dict[new_k] = v
+        new_raft_state_dict = {}
+        for k, v in raft_checkpoint.items():
+            if k.startswith('module.'):
+                new_k = k[7:]
+            else:
+                new_k = k
+            new_raft_state_dict[new_k] = v
         
-    #     combined_state_dict = model.state_dict()
-    #     count = 0
+        combined_state_dict = model.state_dict()
+        count = 0
         
-    #     for k in new_raft_state_dict.keys():
-    #         combined_keys = "module.RAFTStereo." + k
-    #         if combined_keys in combined_state_dict:
-    #             combined_state_dict[combined_keys] = new_raft_state_dict[k] 
-    #             count += 1
+        for k in new_raft_state_dict.keys():
+            combined_keys = "module.RAFTStereo." + k
+            if combined_keys in combined_state_dict:
+                combined_state_dict[combined_keys] = new_raft_state_dict[k] 
+                count += 1
         
-    #     model.load_state_dict(combined_state_dict)
+        model.load_state_dict(combined_state_dict)
                 
-    #     logging.info(f"Done loading checkpoint")
+        logging.info(f"Done loading checkpoint")
     
     # #^ Load SAEC checkpoint
-    saec_checkpoint = torch.load('/home/user/juhyung/SAEC/checkpoints/SAEC_1.pth')
-    model.load_state_dict(saec_checkpoint)
-    # print(saec_checkpoint)
-    logging.info(f"Done loading saec checkpoint")
+    # saec_checkpoint = torch.load('/home/user/juhyung/SAEC/checkpoints/SAEC_1.pth')
+    # model.load_state_dict(saec_checkpoint)
+    # # print(saec_checkpoint)
+    # logging.info(f"Done loading saec checkpoint")
     
     model.cuda()
     # model.train()
