@@ -26,7 +26,6 @@ DEVICE = 'cuda'
 # * End to end pipeline with exposure control not utilize network
 ################################
 
-
 def load_image(imfile):
     img = np.array(imfile).astype(np.uint8)
     img = torch.from_numpy(img).permute(2, 0, 1).float()
@@ -41,8 +40,7 @@ class QuantizeSTE(torch.autograd.Function):
         
         # Quantize
         x_scaled = input * max_val
-        x_clamped = torch.clamp(x_scaled, 0, max_val)
-        
+        x_clamped = torch.clamp(x_scaled, 0, max_val)   
         x_quantized = torch.round(x_clamped).to(torch.uint8)
         
         # Normalized to 0~1
@@ -53,8 +51,9 @@ class QuantizeSTE(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output, None
 
-
-# ! Not use exposure network but algorithm
+# * End to end pipeline using a simple algorithm instead of network.
+# Todo) Changing the method of controlling exposure from using a alogorithm to using a network.
+# Todo) Edit model input and intermediate processes to consider not just 1 stereo pairs but 2 stereo pairs in sequence.
 class CombineModel_wo_net(nn.Module):
     def __init__(self, args):
         super().__init__()
@@ -73,7 +72,6 @@ class CombineModel_wo_net(nn.Module):
     def forward(self, left_hdr, right_hdr, iters=32, flow_init=None, valid_mode = False, test_mode=False, train_mode=False):
         
         #^ Simulator Module HDR -> LDR
-
         # initial random exposure for training
         if train_mode:
             e_rand_high_pair = generate_random_exposures(left_hdr.shape[0], valid_mode=True, value=1.3)
@@ -98,7 +96,6 @@ class CombineModel_wo_net(nn.Module):
         ldr_left_expl_cap = QuantizeSTE.apply(phi_l_expl.noise_modeling(), 8)
         ldr_right_expl_cap = QuantizeSTE.apply(phi_r_expl.noise_modeling(), 8)
         
-
         # * Calculate frame 1,2 histogram 
         histo_ldr1 = calculate_histogram_global(ldr_left_exph_cap)
         histo_ldr2 = calculate_histogram_global(ldr_left_expl_cap)   
@@ -123,19 +120,14 @@ class CombineModel_wo_net(nn.Module):
         # self.initial_exp_high = shifted_exp_f1
         # self.initial_exp_low = shifted_exp_f2
 
-        
         # * For fixed Expsoure
         # shifted_exp_f1, shifted_exp_f2 = self.initial_exp_high, self.initial_exp_low
         
-        # tensorboard logging histogram        
-        #################################################CHANGED###################################################
         #^ Check Exposure values
         print("=====Random exp values=====")
         print(f"Random exp_l : {e_rand_high_pair[0].item():4f}, Random exp_r : {e_rand_low_pair[0].item():4f}")
         print("=====Shifted exp values=====")
         print(f"shifted_exp_l : {shifted_exp_f1[0].item():4f}, shifted_exp_r : {shifted_exp_f2[0].item():4f}")
-
-        ##############################################################################################################
         
         #^ Simulate Image LDR with shifted exposure value
         phi_hat_l_exph = ImageFormation(left_hdr, shifted_exp_f1, device=DEVICE)

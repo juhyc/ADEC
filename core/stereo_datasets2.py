@@ -64,7 +64,7 @@ class StereoDataset(data.Dataset):
         
         disp = np.array(disp).astype(np.float32)
         
-        # # ! Add resizing
+        #* Add resizing
         height, width = img1.shape[1], img1.shape[0]
         img1 = cv2.resize(img1, (height//2, width//2))
         img2 = cv2.resize(img2, (height//2, width//2))
@@ -87,7 +87,6 @@ class StereoDataset(data.Dataset):
         return len(self.image_list)
 
 # * For CARLA synthetic dataset class
-
 class CARLA(StereoDataset):
     def __init__(self, root = 'datasets/CARLA', image_set='training'):
         super(CARLA, self).__init__(reader=read_gen)
@@ -97,6 +96,7 @@ class CARLA(StereoDataset):
         image2_list = []
         disp_list = []
         
+        # Training set
         if image_set == 'training':
             experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))                
             for experiment_folder in experiment_folders:
@@ -143,15 +143,13 @@ def fetch_dataloader(args):
     
     for dataset_name in args.train_datasets:
         if dataset_name.startswith('carla'):
-            # Todo) set shuffle variable if carla dataset is test or validation
             new_dataset = CARLA()
             print(f"Samples : {len(new_dataset)}")
             logging.info(f"Adding {len(new_dataset)} samples from CARLA")
     
     train_dataset = new_dataset if train_dataset is None else train_dataset + new_dataset  
     
-    #! 4/10
-    #! Edit shutt = False to check image formation steps
+    #! Set shuffle varible 'False' to run model on sequence dataset.
     train_loader = data.DataLoader(train_dataset, batch_size=args.batch_size, 
                                    pin_memory=True, shuffle=False, num_workers=int(os.environ.get('SLURM_CPUS_PER_TASK', 6))-2, drop_last=False)
     

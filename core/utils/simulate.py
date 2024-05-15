@@ -194,7 +194,6 @@ class ImageFormation:
         self.poisson_scale = float(3.4e-7)
         
         # HDR scene
-        # !
         if image.max() == 255.0:
             self.original_phi = image.to(self.device)/255.0
         else :
@@ -232,11 +231,8 @@ class ImageFormation:
                     
         # if not torch.is_tensor(exp):
         #     exp = torch.tensor(exp).to(img.device)
-        
         a,b = self.cal_dynamic_range(img, exp)
-        
         img = (exp * img - a) / (b - a)
-        
         img = torch.clamp(img, 0, 1)
         
         return img
@@ -247,17 +243,6 @@ class ImageFormation:
         img_denormalized = img_denormalized / exp
         
         return img_denormalized
-    
-    def quantize_tensor(self, x , n = 8):
-        max_val = 2**n - 1
-        
-        x_scaled = x*max_val
-        
-        x_clamped = torch.clamp(x_scaled, 0, max_val)
-        
-        x_quantized = torch.round(x_clamped)
-        
-        return x_quantized/max_val
         
     def noise_modeling(self, iso = float(100.)):
         """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
@@ -290,9 +275,6 @@ class ImageFormation:
         adc_noise = gauss_std * torch.randn_like(phi_scaled)
         
         noise_hdr = shot_noise + readout_noise + adc_noise
-       
-       # * Edit on 4/10
-       # * Add quantization step, so claping bound is set to [0, 1]
 
         noise_ldr = torch.clamp(noise_hdr, 0, 1)
                 

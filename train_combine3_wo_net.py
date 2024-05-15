@@ -23,7 +23,6 @@ from core.utils.display import *
 
 ###############################################
 # ! Training code without exposure control network
-# Todo) Check image formation results and exposure control by image histrogram
 ###############################################
 
 # Initialize writer for tensorboard logging
@@ -32,6 +31,7 @@ writer = SummaryWriter('runs/combine_pipeline_carla')
 # CUDA
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# generate random exposure
 def generate_exposures(batch_size, test_mode=False, value = 1.0):
     exp_list = []
     
@@ -47,16 +47,15 @@ def generate_exposures(batch_size, test_mode=False, value = 1.0):
         
     return torch.tensor(exp_list)
 
+# Training code
 def train(args):
     
     model = torch.nn.DataParallel(CombineModel_wo_net(args), device_ids=[0])
     print("Parameter Count : %d" % count_parameters(model))
     
-    #^Load dataloader
+    #^ Load dataloader
     train_loader = fetch_dataloader(args)
-    # criterion = nn.MSELoss().to(DEVICE)
     criterion = nn.L1Loss().to(DEVICE)
-    # criterion = BerHuLoss().to(DEVICE)
     optimizer = optim.AdamW(model.parameters(), lr = 0.0001)
     total_steps = 0
     
@@ -66,7 +65,7 @@ def train(args):
         logging.info("Loading checkpoint...")
         raft_checkpoint = torch.load(args.restore_ckpt)
         
-        # * downsampling = 3 case
+        # * if downsampling is 3
         if args.n_downsample == 3:
             del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
         
@@ -98,7 +97,7 @@ def train(args):
     # logging.info(f"Done loading saec checkpoint")
     
     model.cuda()
-    # model.train()
+    model.train()
     
     #^ Freeze RAFTstereo module
     for param in model.module.RAFTStereo.parameters():
@@ -120,11 +119,9 @@ def train(args):
             
             assert model.training
             
-            
             exp1 = generate_exposures(left_hdr.shape[0], test_mode=True, value = 1.0)
             exp2 = generate_exposures(left_hdr.shape[0], test_mode=True, value = 1.0)
             fused_disparity, disparity1, disparity2, img_list, captured_rand_img_list, captured_adj_img_list, mask_list, mask_mul_list, disparity_cap = model(left_hdr, right_hdr, train_mode=True)
-            
             
             # ^ Visualize during training
             # visualize disparity 
@@ -169,16 +166,19 @@ def train(args):
             total_loss = disparity_loss
             
             writer.add_scalar("Training_total_loss", total_loss.item(), global_batch_num)
-            global_batch_num += 1        
+            global_batch_num += 1
+            
+            # ! Uncomment when coverting the exposure module to a network format.
             # total_loss.backward()
             # optimizer.step()
+            
             # # * Test Long sequence
             # print("============================")
             # print("=====Test Long sequence=====")
             # print("============================")
             # validate_carla_longsequence(model.module)
             
-            # # Todo) Validation code 수정
+            # # Todo) Edit Validation code 
             # if total_steps % validation_frequency == validation_frequency - 1:
             #     print("=====Validation=====")
             #     valid_num = (total_steps / validation_frequency) * 10 + 1
@@ -226,7 +226,7 @@ def train(args):
                 should_keep_training = False
                 break
             
-            #^ save intermediate checkpoint file to display
+            #^ Save intermediate checkpoint file to display
             if total_steps%100 == 0:
                 save_path = Path('checkpoints/%s_%d_epoch.pth' % (args.name, total_steps))
                 logging.info(f"Saving intermediate file {save_path}")
@@ -243,8 +243,6 @@ def train(args):
 
     return PATH
             
-
-
 if __name__  == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default='SAEC', help="name your experiment")
