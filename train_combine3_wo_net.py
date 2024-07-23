@@ -50,7 +50,7 @@ def generate_exposures(batch_size, test_mode=False, value = 1.0):
 # Training code
 def train(args):
     
-    model = torch.nn.DataParallel(CombineModel_wo_net(args), device_ids=[0])
+    model = torch.nn.DataParallel(CombineModel_wo_net(args))
     print("Parameter Count : %d" % count_parameters(model))
     
     #^ Load dataloader

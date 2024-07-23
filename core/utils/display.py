@@ -9,6 +9,7 @@ import re
 import io
 from torchvision.transforms.functional import to_tensor
 from core.saec import calculate_histogram_global
+from io import BytesIO
 
 ###############################################
 # * Visualize code for tensorboard logging
@@ -268,3 +269,82 @@ def visualize_histogram(img):
     image = np.array(image)
     
     return image
+
+def plot_to_image(figure, dpi=200):
+    """Converts the matplotlib plot specified by 'figure' to a PNG image and returns it as a numpy array."""
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=dpi)
+    buf.seek(0)
+    image = Image.open(buf)
+    return np.array(image)
+
+def visualize_tensor_with_DR(writer, step, hdr, ldr1, ldr2):
+    image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
+    image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
+    image_np_ldr2 = ldr2.squeeze(0).permute(1,2,0).cpu().numpy()
+    
+    hdr_dr = image_np_hdr.max()
+    ldr_dr1 = image_np_ldr1.max()/image_np_ldr1.min()
+    ldr_dr2 = image_np_ldr2.max()/image_np_ldr2.min()
+
+    plt.figure(figsize=(18, 6))
+
+    # # HDR 이미지 시각화
+    # plt.subplot(1, 3, 1)
+    # plt.title('HDR Image')
+    # plt.imshow(image_np_hdr_norm)
+    # plt.text(10, 10, f'DR: {hdr_dr:.2f} dB', color='white', backgroundcolor='black', fontsize=12, ha='left')
+    # plt.axis('off')
+
+    # # LDR 이미지 시각화
+    # plt.subplot(1, 3, 2)
+    # plt.title('LDR Image')
+    # plt.imshow(image_np_ldr_norm)
+    # plt.text(10, 10, f'DR: {ldr_dr:.2f} dB', color='white', backgroundcolor='black', fontsize=12, ha='left')
+    # plt.axis('off')
+
+    # 히스토그램 시각화
+    # plt.subplot(1, 3, 3)
+    plt.title('Dynamic Range Visualization')
+    plt.hist(image_np_hdr.ravel(), bins=256, color='orange', alpha=0.75, label='HDR')
+    plt.hist(image_np_ldr1.ravel(), bins=256, color='green', alpha=0.75, label='LDR1')
+    plt.hist(image_np_ldr2.ravel(), bins=256, color='blue', alpha=0.75, label='LDR2')
+    plt.yscale('log')
+    plt.xlabel('Pixel Intensity (log scale)')
+    plt.ylabel('Frequency')
+    plt.legend()
+
+    # plt.subplots_adjust(wspace=0.2, hspace=0.2)
+
+    # 이미지로 변환하여 TensorBoard에 기록
+    image_buf = plot_to_image(plt.gcf())
+    writer.add_image('HDR_LDR_Comparison', image_buf, step, dataformats='HWC')
+    plt.close()
+
+def visualize_tensor_with_DR_save(writer, step, hdr, ldr1, ldr2, num_cnt):
+    image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
+    image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
+    image_np_ldr2 = ldr2.squeeze(0).permute(1,2,0).cpu().numpy()
+    
+    hdr_dr = image_np_hdr.max()
+    ldr_dr1 = image_np_ldr1.max()/image_np_ldr1.min()
+    ldr_dr2 = image_np_ldr2.max()/image_np_ldr2.min()
+
+    plt.figure(figsize=(18, 6))
+
+    plt.title('Dynamic Range Visualization')
+    plt.hist(image_np_hdr.ravel(), bins=256, color='orange', alpha=0.75, label='HDR')
+    plt.hist(image_np_ldr1.ravel(), bins=256, color='green', alpha=0.75, label='LDR1')
+    plt.hist(image_np_ldr2.ravel(), bins=256, color='blue', alpha=0.75, label='LDR2')
+    plt.yscale('log')
+    plt.xlabel('Pixel Intensity (log scale)')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.savefig(f'test/sample/dynamic_range/{num_cnt}.png')
+
+    # plt.subplots_adjust(wspace=0.2, hspace=0.2)
+
+    # 이미지로 변환하여 TensorBoard에 기록
+    image_buf = plot_to_image(plt.gcf())
+    writer.add_image('HDR_LDR_Comparison', image_buf, step, dataformats='HWC')
+    plt.close()

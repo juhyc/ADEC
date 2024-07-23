@@ -11,23 +11,22 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from core.raft_stereo import RAFTStereo
-from core.combine_model3 import CombineModel_wo_net
+from core.combine_model2 import CombineModel_wo_net
 
 from evaluate_stereo import *
-from core.stereo_datasets3 import fetch_dataloader, CARLASequenceDataset
+from core.stereo_datasets2 import fetch_dataloader, CARLA
 import matplotlib.pyplot as plt
 from PIL import Image
 
 from core.loss import gradient_loss, smoothness_loss
-from core.depth_datasets import DepthDataset_stereo
 from core.utils.display import *
+from core.utils.simulate import ImageFormation
 
 import torch.nn.utils as nn_utils
 
-# from torchviz import make_dot
-
 # ###############################################
-# # * Training code without exposure control network
+# * Training code with exposure control network
+# * With stereodataset2, combine_model2
 # ###############################################
 
 # # Initialize writer for tensorboard logging
@@ -46,13 +45,14 @@ def adjust_exposure(image, current_exposure, target_exposure):
     return adjusted_image.to(device)
 
 def train(args):
-    model = torch.nn.DataParallel(CombineModel_wo_net(args))
+    model = torch.nn.DataParallel(CombineModel_wo_net(args), device_ids=[0])
     print("Parameter Count : %d" % count_parameters(model))
 
     #^ Load dataloader
     train_loader = fetch_dataloader(args)
     # criterion = nn.L1Loss().to(DEVICE)
     criterion = nn.SmoothL1Loss().to(DEVICE)
+    # criterion = nn.MSELoss().to(DEVICE)
     # optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     optimizer = optim.AdamW(model.module.alpha_net.parameters(), lr=args.lr, weight_decay=0.001)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.5)
@@ -65,7 +65,7 @@ def train(args):
         logging.info("Loading checkpoint...")
         raft_checkpoint = torch.load(args.restore_ckpt)
         
-        # Downsampling = 3 case
+        #* If downsampling is 3 
         if args.n_downsample == 3:
             del raft_checkpoint['module.update_block.mask.2.weight'], raft_checkpoint['module.update_block.mask.2.bias']
 
@@ -94,56 +94,81 @@ def train(args):
     model.train()
     
     
+    # ^ Freeze Network parameter
     for param in model.module.alpha_net.parameters():
         param.requires_grad = True
     # Freeze RAFTStereo module
     for param in model.module.RAFTStereo.parameters():
         param.requires_grad = False
-    # Freeze Flowmodel
-    for param in model.module.flow.parameters():
-        param.requires_grad = False
 
     model.module.RAFTStereo.freeze_bn()
 
-    validation_frequency = 50
+    validation_frequency = 1000
 
     should_keep_training = True
     global_batch_num = 0
-
+    
+    #? Create manual alpha values
+    alpha_values = torch.arange(0.0, 1.0, 0.05)
+    num_cnt = 0 # For save sequence image pair
+    
+    #* Generate random expsoures considering the batch size
+    initial_exp_high = generate_random_exposures(args.batch_size, valid_mode=True, value = 1.0)
+    initial_exp_low = generate_random_exposures(args.batch_size, valid_mode=True, value = 1.0)
+    # print(initial_exp_high)
+    # print(initial_exp_low)
+    
     #^ Training
     while should_keep_training:
 
         for i_batch, (_, *data_blob) in enumerate(tqdm(train_loader)):
             optimizer.zero_grad()
                    
-            left_hdr, right_hdr, left_next_hdr, right_next_hdr, disparity, valid = [x.cuda() for x in data_blob]
+            left_hdr, right_hdr, disparity, valid, max_val1, max_val2 = [x.cuda() for x in data_blob]
             
-            print(left_hdr.shape)
+            # left_hdr = torch.clamp(left_hdr * 2.0, 0, 1)
+            # right_hdr = torch.clamp(right_hdr * 2.0, 0, 1)
+            scale_intensity = 1.0
+            left_hdr = torch.clamp(left_hdr * scale_intensity, 0, 1)
+            right_hdr = torch.clamp(right_hdr * scale_intensity, 0, 1)
             
-            #* Generate random expsoures considering the batch size
-            initial_exp_high = generate_random_exposures(left_hdr.shape[0])
-            initial_exp_low = generate_random_exposures(left_hdr.shape[0])
-            
-            # print(f"initial_exp_high_batch : {initial_exp_high}")
-            # print(f"initial_exp_low_batch : {initial_exp_low}")
+            # initial_exp_high = generate_random_exposures(args.batch_size, valid_mode=True, value = 6.0)
+            # initial_exp_low = generate_random_exposures(args.batch_size, valid_mode=True, value = 0.8)
             
             assert model.training
-
+            
+            #? Manual alpha value
+            print(f"Global batch step : [{global_batch_num+1}/{len(train_loader)}]")
+            alpha = torch.tensor([[alpha_values[3]]], dtype=torch.float32)
+            # print(alpha)
+            
+            
             # Model forward pass
-            fused_disparity, disparity1, disparity2, original_img_list, captured_rand_img_list, captured_adj_img_list, warped_img_list, mask_mul_list, disparity_list, shifted_exp = model(
-                left_hdr, right_hdr, left_next_hdr, right_next_hdr, initial_exp_high, initial_exp_low, train_mode=True)
+            fused_disparity, disparity1, disparity2, captured_rand_img_list, captured_adj_img_list, mask_mul_list, disparity_list, shifted_exp = model(
+                left_hdr, right_hdr, initial_exp_high, initial_exp_low, alpha, train_mode=True)
 
-            shifted_exp_high = shifted_exp[0]
-            shifted_exp_low = shifted_exp[1]
-            # print(f"shifted_exp_high_batch : {shifted_exp_high}")
-            # print(f"shifted_exp_low_batch :{shifted_exp_low}")
+            print(f"shifted_exp_high_batch : {shifted_exp[0]}")
+            print(f"shifted_exp_low_batch :{shifted_exp[1]}")
+            #* Update initial exposure 
+            initial_exp_high = shifted_exp[0]
+            initial_exp_low = shifted_exp[1]
 
-            #^ Visualize during training
+            #^ Logging
+            phi1 = ImageFormation(left_hdr*max_val1, exp = initial_exp_high, device=DEVICE)
+            phi2 = ImageFormation(left_hdr*max_val2, exp = initial_exp_low, device=DEVICE)
+            noise_ldr1 = phi1.noise_modeling()
+            noise_ldr1_denom = phi1.ldr_denom
+            noise_ldr2 = phi2.noise_modeling()
+            noise_ldr2_denom = phi2.ldr_denom
+            #? Dynamic range logging
+            # visualize_tensor_with_DR(writer, global_batch_num, left_hdr*max_val1, noise_ldr1_denom, noise_ldr2_denom)
+            visualize_tensor_with_DR_save(writer, global_batch_num, left_hdr*max_val1, noise_ldr1_denom, noise_ldr2_denom, num_cnt)
+            
+            #? Disparity map
             writer.add_image('Train/Fused_disparity', visualize_flow_cmap(fused_disparity), global_batch_num)
             writer.add_image('Train/disparity_frame1', visualize_flow_cmap(disparity1), global_batch_num)
-            writer.add_image('Train/disparity_frame2_warped', visualize_flow_cmap(disparity2), global_batch_num)
+            writer.add_image('Train/disparity_frame2', visualize_flow_cmap(disparity2), global_batch_num)
             writer.add_image('Train/disparity_GT', visualize_flow_cmap(disparity), global_batch_num)
-            
             writer.add_image('Train/disparity_cap_frame1', visualize_flow_cmap(disparity_list[0]), global_batch_num)
             writer.add_image('Train/disparity_cap_frame2', visualize_flow_cmap(disparity_list[1]), global_batch_num)
 
@@ -151,71 +176,55 @@ def train(args):
             writer.add_image('Train/disparity1_mul', visualize_flow_cmap(mask_mul_list[0]), global_batch_num)
             writer.add_image('Train/disparity2_mul', visualize_flow_cmap(mask_mul_list[1]), global_batch_num)
 
-            # Visualize captured image
-            writer.add_image('Captured(T)/hdr_left_frame1', original_img_list[0][0], global_batch_num)
-            writer.add_image('Captured(T)/hdr_left_frame2', original_img_list[1][0], global_batch_num)
+            #? Visualize captured image
+            writer.add_image('Captured(T)/hdr_left_gt', left_hdr[0]**(1/2.2), global_batch_num)
+            # writer.add_image('Captured(T)/hdr_left_frame2', left_hdr[0], global_batch_num)
             writer.add_image('Captured(T)/img1_rand_left', captured_rand_img_list[0][0], global_batch_num)
             writer.add_image('Captured(T)/img2_rand_left', captured_rand_img_list[1][0], global_batch_num)
+            writer.add_image('Captured(T)/img1_adj_left', captured_adj_img_list[0][0]**(1/2.2), global_batch_num)
+            writer.add_image('Captured(T)/img2_adj_left', captured_adj_img_list[1][0]**(1/2.2), global_batch_num)
+            # writer.add_image('Captured(T)/img2_adj_right', captured_adj_img_list[2][0], global_batch_num)
+
+            #? Logging : Save image for video
+            save_image(visualize_flow_cmap(fused_disparity), f'test/sample/fused_disp/{num_cnt}.png')
+            save_image(visualize_flow_cmap(disparity1), f'test/sample/left_dispf1/{num_cnt}.png')
+            save_image(visualize_flow_cmap(disparity2), f'test/sample/left_dispf2/{num_cnt}.png')
+            save_image(visualize_flow_cmap(disparity), f'test/sample/gt_disp/{num_cnt}.png')
             
-            # # Normalized image
-            # target_exp = (initial_exp_high[0] + initial_exp_low[0])/2
-            # print(f"target_exp : {target_exp}")
-            # exposure_factor1 = (target_exp / initial_exp_high[0]).to(DEVICE)
-            # exposure_factor2 = (target_exp / initial_exp_low[0]).to(DEVICE)
-            # adjusted_img1 = captured_rand_img_list[0][0]*exposure_factor1
-            # adjusted_img2 = captured_rand_img_list[1][0]*exposure_factor2
-            # writer.add_image('Captured(T)/img1_rand_normalize', adjusted_img1, global_batch_num)
-            # writer.add_image('Captured(T)/img2_rand_normalize', adjusted_img2, global_batch_num)
+            save_image_255(captured_rand_img_list[0][0]**(1/2.2), f'test/sample/left_capf1/{num_cnt}.png')
+            save_image_255(captured_rand_img_list[1][0]**(1/2.2), f'test/sample/left_capf2/{num_cnt}.png')
+
+            num_cnt +=1
             
-            # Visualize warped image
-            writer.add_image('Captured(T)/warped_left', warped_img_list[0][0], global_batch_num)
-            writer.add_image('Captured(T)/warped_right', warped_img_list[1][0], global_batch_num)
-
-            # Visualize dynamic range
-            # writer.add_image('Captured(T)/hdr_dynamic_range', visualize_dynamic_range(original_img_list[0]), global_batch_num)
-            # writer.add_image('Histogram(T)/img1_dynamic_range(rand)', visualize_dynamic_range(captured_rand_img_list[0], HDR=False), global_batch_num)
-            # writer.add_image('Histogram(T)/img2_dynamic_range(rand)', visualize_dynamic_range(captured_rand_img_list[1], HDR=False), global_batch_num)
-
-            # Visualize adjusted image
-            writer.add_image('Captured(T)/img1_adj_left', captured_adj_img_list[0][0], global_batch_num)
-            writer.add_image('Captured(T)/img2_adj_left', captured_adj_img_list[1][0], global_batch_num)
-
-            # writer.add_image('Captured(T)/img1_adj_mask', visualize_mask(mask_list[0]), global_batch_num)
-            # writer.add_image('Captured(T)/img2_adj_mask', visualize_mask(mask_list[1]), global_batch_num)
-
-            # writer.add_image('Histogram(T)/img1_dynamic_range(adj)', visualize_dynamic_range(captured_adj_img_list[0], HDR=False), global_batch_num)
-            # writer.add_image('Histogram(T)/img2_dynamic_range(adj)', visualize_dynamic_range(captured_adj_img_list[1], HDR=False), global_batch_num)
-
             assert model.training
 
-            #^ Exist valid mask calculation
+            #* Exist valid mask calculation
             valid_mask = (valid >= 0.5)
             valid_mask = valid_mask.unsqueeze(1)
 
-            # Mask visualize to check loss calculation
+            #^ Loss calculation
             disparity_loss = criterion(fused_disparity[valid_mask], disparity[valid_mask])
-            # grad_loss = gradient_loss(fused_disparity, disparity)
-            # smooth_loss = smoothness_loss(fused_disparity, left_hdr)
-
-            # total_loss = disparity_loss + 0.1 * grad_loss + 0.1 * smooth_loss
             total_loss = disparity_loss
 
             writer.add_scalar("Training_total_loss", total_loss.item(), global_batch_num)
+            
+            #? Logging total loss with alpha values
+            # writer.add_scalar("Loss/Value_{}".format(alpha.item(), total_loss.item()), global_batch_num)
             global_batch_num += 1
-            #^ Loss calculation
-            total_loss.backward()
-            # * gradient clipping
+
+            # total_loss.backward()
+            #* Gradient clipping
             nn_utils.clip_grad_norm_(model.module.alpha_net.parameters(), max_norm = 5.0)
             
-            #! Check gradient
+            #? Check gradient in alpha network
             for name, param in model.named_parameters():
                 if param.requires_grad and param.grad is not None:
                     print(f"{name} gradient norm: {param.grad.norm().item()}")
             
-            optimizer.step()
-            scheduler.step()
+            # optimizer.step()
+            # scheduler.step()
 
-            #^ Validation code
+            #^ Validation
             if total_steps % validation_frequency == validation_frequency - 1:
                 print("=====Validation=====")
                 valid_num = (total_steps / validation_frequency) * 10 + 1
@@ -233,7 +242,7 @@ def train(args):
                 should_keep_training = False
                 break
       
-            #^ Save intermediate checkpoint file to display
+            #* Save intermediate checkpoint file to display
             if total_steps % 100 == 0:
                 save_path = Path('checkpoints/%s_%d_epoch.pth' % (args.name, total_steps))
                 logging.info(f"Saving intermediate file {save_path}")

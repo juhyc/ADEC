@@ -145,3 +145,4 @@ class RAFTStereo(nn.Module):
             return coords1 - coords0, flow_up
         
         return flow_predictions
+

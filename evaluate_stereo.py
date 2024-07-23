@@ -16,6 +16,7 @@ from core.loss import *
 from core.utils.display import *
 from torch.utils.tensorboard import SummaryWriter
 import core.stereo_datasets2 as datasets2
+import core.stereo_datasets3 as datasets3
 
 ###############################################
 # * For validate pipeline
@@ -191,32 +192,123 @@ def validate_kitti2(model, iters=32, mixed_prec=False):
           
     return loss, fused_disparity, disparity1, disparity2, captured_rand_img_list, captured_img_list
 
+# @torch.no_grad()
+# def validate_carla(model, iters=32, mixed_prec=False):
+#     """Perform validation using the CARLA synthetic dataset"""
+#     model.eval()
+#     val_dataset = datasets2.CARLA(image_set='validate')
+#     torch.backends.cudnn.benchmark = True
+#     # criterion = nn.MSELoss().cuda()
+#     criterion = nn.L1Loss().cuda()
+    
+#     out_list, epe_list, loss_list = [], [], []
+#     for val_id in range(len(val_dataset)):
+#         _, image1, image2, flow_gt, valid_gt = val_dataset[val_id]
+#         image1 = image1[None].cuda()
+#         image2 = image2[None].cuda()
+        
+#         padder = InputPadder(image1.shape, divis_by = 32)
+#         image1, image2 = padder.pad(image1, image2)
+        
+#         with autocast(enabled=mixed_prec):
+#             start = time.time()
+#             fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, disp_rand1, disp_rand2, mask_list, mask_mul_list = model(image1, image2, iters=iters, valid_mode=True)
+#             end = time.time()
+            
+#         fused_disparity= padder.unpad(fused_disparity).cpu().squeeze(0)
+#         valid_mask = (valid_gt >= 0.5)
+#         valid_mask = valid_mask.unsqueeze(0)
+        
+#         # Validation loss
+#         loss = criterion(fused_disparity[valid_mask], flow_gt[valid_mask])
+#         loss_list.append(loss.item())
+        
+#         # Calculate epe(End-point-error)
+#         epe = torch.sum((fused_disparity - flow_gt)**2, dim=0).sqrt()
+#         epe_flattened = epe.flatten()
+#         val = valid_gt.flatten() >= 0.5
+        
+#         # pixel threshold 3.0 pixel
+#         out = (epe_flattened > 3.0)
+        
+#         epe_list.append(epe_flattened[val].mean().item())
+#         out_list.append(out[val].cpu().numpy())
+                
+#         # print(f"====Validation loss : {loss}====")
+    
+#     epe = np.mean(epe_list)
+#     d1 = 100 * np.mean(out_list)
+#     loss_mean = np.mean(loss_list)
+    
+#     print(f"Validation CARLA : Loss {loss_mean}, D1 {d1}, EPE {epe}")
+    
+#     return loss_mean, d1, fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, flow_gt, disp_rand1, disp_rand2, mask_list, mask_mul_list
+
+eval_writer = SummaryWriter('runs/evaluation_longsequence')
+
 @torch.no_grad()
 def validate_carla(model, iters=32, mixed_prec=False):
     """Perform validation using the CARLA synthetic dataset"""
     model.eval()
-    val_dataset = datasets2.CARLA(image_set='validate')
+    val_dataset = datasets3.CARLASequenceDataset(image_set='validate')
     torch.backends.cudnn.benchmark = True
-    # criterion = nn.MSELoss().cuda()
-    criterion = nn.L1Loss().cuda()
+    criterion = nn.SmoothL1Loss().cuda()
     
     out_list, epe_list, loss_list = [], [], []
-    for val_id in range(len(val_dataset)):
-        _, image1, image2, flow_gt, valid_gt = val_dataset[val_id]
+    # For save image
+    num_cnt = 0
+    
+    for val_id in range(len(val_dataset)): # 100 sequence
+        
+        _, image1, image2, image1_next, image2_next, flow_gt, valid_gt = val_dataset[val_id]
+        
         image1 = image1[None].cuda()
         image2 = image2[None].cuda()
+        image1_next = image1_next[None].cuda()
+        image2_next = image2_next[None].cuda()
+        
+        if val_id == 0:
+            initial_exp1 = generate_random_exposures(image1.shape[0], valid_mode=True).cuda()
+            initial_exp2 = generate_random_exposures(image1.shape[0], valid_mode=True).cuda()
         
         padder = InputPadder(image1.shape, divis_by = 32)
         image1, image2 = padder.pad(image1, image2)
+        image1_next, image2_next = padder.pad(image1_next, image2_next)
         
+        # Todo) model validation mode일 때로 수정
         with autocast(enabled=mixed_prec):
             start = time.time()
-            fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, disp_rand1, disp_rand2, mask_list, mask_mul_list = model(image1, image2, iters=iters, valid_mode=True)
+            fused_disparity, disp1, disp2, cap_adj_img_list, shifted_exp = model(image1, image2, image1_next, image2_next, initial_exp1, initial_exp2, iters=iters, valid_mode=True)
             end = time.time()
-            
+        
+        #* Validation logging
+        eval_writer.add_image('gt_disp', visualize_flow_cmap(flow_gt), val_id)
+        eval_writer.add_image('disp1', visualize_flow_cmap(disp1), val_id)
+        eval_writer.add_image('disp2', visualize_flow_cmap(disp2), val_id)
+        eval_writer.add_image('Fused_disparity', visualize_flow_cmap(fused_disparity), val_id)
+        eval_writer.add_image('f1_adj_left', cap_adj_img_list[0][0], val_id)
+        eval_writer.add_image('f2_adj_left', cap_adj_img_list[1][0], val_id)
+        
+        save_image(visualize_flow_cmap(fused_disparity), f'Demo/cap_fused_disp03/fused_disp_{num_cnt}.png')
+        save_image(visualize_flow_cmap(disp1[0]), f'Demo/cap_disp1/disp1_{num_cnt}.png')
+        save_image(visualize_flow_cmap(disp2[0]), f'Demo/cap_disp2/disp2_{num_cnt}.png')
+        save_image(visualize_flow_cmap(flow_gt), f'Demo/cap_disp_gt/gt_{num_cnt}.png')
+        
+        # Save captured imag
+        save_image_255(cap_adj_img_list[0][0], f'Demo/cap_f1/cap_f1_{num_cnt}.png')
+        save_image_255(cap_adj_img_list[0][0], f'Demo/cap_f1_f2/cap_{num_cnt}.png')
+        num_cnt += 1
+        save_image_255(cap_adj_img_list[1][0], f'Demo/cap_f1_f2/cap_{num_cnt}.png')
+        save_image_255(cap_adj_img_list[1][0], f'Demo/cap_f2/cap_f2_{num_cnt}.png')
+        num_cnt += 1
+        
         fused_disparity= padder.unpad(fused_disparity).cpu().squeeze(0)
         valid_mask = (valid_gt >= 0.5)
         valid_mask = valid_mask.unsqueeze(0)
+        
+        # Update exposure value
+        initial_exp1 = shifted_exp[0]
+        initial_exp2 = shifted_exp[1]
         
         # Validation loss
         loss = criterion(fused_disparity[valid_mask], flow_gt[valid_mask])
@@ -232,7 +324,9 @@ def validate_carla(model, iters=32, mixed_prec=False):
         
         epe_list.append(epe_flattened[val].mean().item())
         out_list.append(out[val].cpu().numpy())
-                
+        
+        print(f"Validation images : [{val_id}/{len(val_dataset)}]")
+        print(f"Shifted exp : [even_frame : {shifted_exp[0]}, odd_frame : {shifted_exp[1]}]")
         # print(f"====Validation loss : {loss}====")
     
     epe = np.mean(epe_list)
@@ -241,9 +335,7 @@ def validate_carla(model, iters=32, mixed_prec=False):
     
     print(f"Validation CARLA : Loss {loss_mean}, D1 {d1}, EPE {epe}")
     
-    return loss_mean, d1, fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, flow_gt, disp_rand1, disp_rand2, mask_list, mask_mul_list
-
-eval_writer = SummaryWriter('runs/evaluation_longsequence')
+    return loss_mean, d1, fused_disparity
 
 @torch.no_grad()
 def validate_carla_longsequence(model, iters=32, mixed_prec=False):
