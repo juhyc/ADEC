@@ -5,7 +5,7 @@ from PIL import Image
 import random
 from torchvision.transforms import ToTensor
 
-M_exp = 2
+M_exp = 4
 M_sensor = 2**8 - 1
 
 ###############################################

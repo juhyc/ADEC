@@ -25,7 +25,7 @@ DEVICE = 'cuda'
 ################################
 # * End to end pipeline with exposure control network
 # * Exposure network output is alpha that decide how to control exposure gap.
-# * Simulator - Exposure Net - Disparity Estimation
+# * Simulator -> Exposure Net -> Disparity Estimation
 ################################
 
 # Todo) 240625, Test network output value alpha affects overall loss.
@@ -112,8 +112,8 @@ class CombineModel_wo_net(nn.Module):
         
         
         # ^ Expsoure alpha network
-        # alpha1, alpha2 = self.alpha_net(ldr_left_exph_cap, ldr_right_exph_cap)
-        alpha1, alpha2 = alpha, alpha
+        alpha1, alpha2 = self.alpha_net(ldr_left_exph_cap, ldr_right_exph_cap)
+        # alpha1, alpha2 = alpha, alpha
         
         #? Check Exposure values
         # print("=====Random exp values=====")

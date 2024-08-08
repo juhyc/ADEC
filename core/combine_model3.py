@@ -248,7 +248,8 @@ class CombineModel_wo_net(nn.Module):
         disparity_expl = self.RAFTStereo(warped_left_tensor, warped_right_tensor)
         disparity_cap_exph = self.RAFTStereo(ldr_left_exph_cap, ldr_right_exph_cap)
         disparity_cap_expl = self.RAFTStereo(ldr_left_expl_cap, ldr_right_expl_cap)
-
+        
+        # For logging
         original_img_list = [left_hdr, left_next_hdr]
         captured_rand_img_list = [ldr_left_exph_cap, ldr_left_expl_cap]
         captured_adj_img_list = [left_ldr_adj_exph, left_ldr_adj_expl, right_ldr_adj_exph, right_ldr_adj_expl]

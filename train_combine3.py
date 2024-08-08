@@ -28,6 +28,8 @@ import torch.nn.utils as nn_utils
 
 # ###############################################
 # # * Training code without exposure control network
+# # * Considering sequence
+# # * Add flow estimate model and freeze
 # ###############################################
 
 # # Initialize writer for tensorboard logging
