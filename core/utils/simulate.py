@@ -129,7 +129,7 @@ def generate_random_exposures(batch_size, valid_mode=False, value = 1.0):
     else:
         for _ in range(batch_size):
             # exp = random.uniform(M_exp**(-1), M_exp)
-            exp = random.uniform(0.5, 4)
+            exp = random.uniform(2**(-value), 2**(value))
             exp_list.append([exp])
         
     return torch.tensor(exp_list)
@@ -179,7 +179,7 @@ def min_max_scale(image):
 
 # ^ Image Simulation class (noise modeling, adjust dynamic range)
 class ImageFormation:
-    def __init__(self, image, exp, range=4.0, device = 'cpu'):
+    def __init__(self, image, exp, range=6.0, device = 'cuda'):
         """Initialize image formation model.
             Set image to phi.
             Calculate gain, shutter time from exposure value 'exp'.
@@ -214,42 +214,6 @@ class ImageFormation:
         self.g = torch.max(torch.ones_like(self.exp) , self.exp/self.T_max)
         self.t = self.exp/self.g 
     
-    def cal_dynamic_range(self, img, exp):
-        """Calculate dynamic range from image statistic and exposure value.
-
-        Args:
-            img : image
-            exp : exposure
-
-        Returns:
-            a,b : caculated dynamic range
-        """
-        mean_intensity = torch.mean(img, dim=[1,2,3], keepdim=True)
-        std_intensity = torch.std(img, dim=[1,2,3], keepdim=True)
-        
-        a = mean_intensity - exp.view(-1,1,1,1) * std_intensity
-        b = mean_intensity + exp.view(-1,1,1,1) * std_intensity
-        
-        return a,b
-    
-    def adjust_dr(self, img, exp):
-                    
-        # if not torch.is_tensor(exp):
-        #     exp = torch.tensor(exp).to(img.device)
-        a,b = self.cal_dynamic_range(img, exp)
-
-        img = (exp * img - a) / (b - a)
-        img = torch.clamp(img, 0, 1)
-        
-        return img
-        
-    def denormalized_image(self, img, exp):
-        a, b = self.cal_dynamic_range(img, exp)
-        img_denormalized = (b-a) * img + a
-        img_denormalized = img_denormalized / exp
-        
-        return img_denormalized
-    
     def noise_modeling(self):
         """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
 
@@ -273,7 +237,7 @@ class ImageFormation:
         
         gauss_std = torch.sqrt(torch.tensor(self.gauss_var)).to(self.device) * (1/t_expanded)
         poisson_scale = torch.tensor(self.poisson_scale).to(self.device) * (1/t_expanded)
-        
+    
         # Shot noise
         shot_noise = torch.poisson(self.phi/poisson_scale) * poisson_scale * g_expanded
         # Readout noise

@@ -10,6 +10,9 @@ import io
 from torchvision.transforms.functional import to_tensor
 from core.saec import calculate_histogram_global
 from io import BytesIO
+import torchvision.utils as vutils
+from ptlflow.utils import flow_utils
+import torch.nn.functional as F
 
 ###############################################
 # * Visualize code for tensorboard logging
@@ -348,3 +351,94 @@ def visualize_tensor_with_DR_save(writer, step, hdr, ldr1, ldr2, num_cnt):
     image_buf = plot_to_image(plt.gcf())
     writer.add_image('HDR_LDR_Comparison', image_buf, step, dataformats='HWC')
     plt.close()
+
+# For feature map logging
+def log_feature_map(writer, feature_map, tag, step):
+    
+    first_sample = feature_map[0]
+    # Normalize feature map to [0, 1] for visualization
+    normalized_feature_map = (first_sample - first_sample.min()) / (first_sample.max() - first_sample.min())
+    # Select first n feature maps (e.g., first 1 feature maps)
+    n = min(1, normalized_feature_map.size(0))  # Select how many feature maps you want to log
+    grid = vutils.make_grid(normalized_feature_map[:n], normalize=True, scale_each=True)
+    # Log the feature map grid to TensorBoard
+    writer.add_image(tag, grid, global_step=step)
+    
+
+def log_multiple_feature_map(writer, feature_map, tag, step, num_channels=4):
+    # 첫 번째 배치에서 num_channels개의 채널 선택
+    first_sample = feature_map[0, :num_channels]
+
+    first_sample = first_sample.unsqueeze(1)  # [C, 1, H, W]
+
+    # Normalize feature map to [0, 1] for visualization
+    normalized_feature_map = (first_sample - first_sample.min()) / (first_sample.max() - first_sample.min())
+    
+    # Make grid of selected channels as separate grayscale images
+    grid = vutils.make_grid(normalized_feature_map, nrow=num_channels, normalize=True, scale_each=True)
+    
+    writer.add_image(tag, grid, global_step=step)
+
+def visualize_flow(writer, flow, tag, step):
+    flow_rgb = flow_utils.flow_to_rgb(flow)
+    
+    writer.add_image(tag, flow_rgb[0], global_step = step)
+    
+def consine_similarity(feature_map1, feature_map2):
+    feature_map1 = feature_map1.view(feature_map1.size(0), -1)  # Flattening
+    feature_map2 = feature_map2.view(feature_map2.size(0), -1)  # Flattening
+    similarity = F.cosine_similarity(feature_map1, feature_map2)
+    return similarity.item()
+
+def normalized_cosine_similarity(fmap1, fmap2):
+    # Flatten and normalize each feature map
+    fmap1_flat = fmap1.view(fmap1.size(0), -1)  # Flatten [B, C, H, W] -> [B, C*H*W]
+    fmap2_flat = fmap2.view(fmap2.size(0), -1)  # Flatten [B, C, H, W] -> [B, C*H*W]
+    
+    fmap1_normalized = F.normalize(fmap1_flat, p=2, dim=1)
+    fmap2_normalized = F.normalize(fmap2_flat, p=2, dim=1)
+    
+    cos_sim = F.cosine_similarity(fmap1_normalized, fmap2_normalized, dim=1)
+    return cos_sim.mean().item()  # Average cosine similarity across the batch
+
+# Loggig feature map differences
+def log_difference_map(writer, fmap1, warped_fmap, fused_fmap, step, prefix="Train"):
+    # Calculate the difference
+    diff_fmap1 = torch.abs(fmap1 - fused_fmap)
+    diff_warped_fmap = torch.abs(warped_fmap - fused_fmap)
+
+    # Normalize the difference for visualization
+    diff_fmap1 = (diff_fmap1 - diff_fmap1.min()) / (diff_fmap1.max() - diff_fmap1.min())
+    diff_warped_fmap = (diff_warped_fmap - diff_warped_fmap.min()) / (diff_warped_fmap.max() - diff_warped_fmap.min())
+
+    # Select one channel for visualization (or take the mean across channels)
+    diff_fmap1 = diff_fmap1[:, 0:1, :, :]
+    diff_warped_fmap = diff_warped_fmap[:, 0:1, :, :]
+
+    # Convert the tensor to numpy for matplotlib
+    diff_fmap1_np = diff_fmap1[0].detach().cpu().numpy().squeeze()
+    diff_warped_fmap_np = diff_warped_fmap[0].detach().cpu().numpy().squeeze()
+
+    # Create figure and axes
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Plot fmap1 vs fused map difference
+    im1 = axs[0].imshow(diff_fmap1_np, cmap='viridis')
+    axs[0].set_title('Difference: Fmap1 vs Fused')
+    fig.colorbar(im1, ax=axs[0])
+
+    # Plot warped fmap vs fused map difference
+    im2 = axs[1].imshow(diff_warped_fmap_np, cmap='viridis')
+    axs[1].set_title('Difference: Warped Fmap vs Fused')
+    fig.colorbar(im2, ax=axs[1])
+
+    # Save the plot as a numpy array
+    fig.canvas.draw()
+    plot_image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    plot_image = plot_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+    # Close the plot to free memory
+    plt.close(fig)
+
+    # Log the plot image to TensorBoard
+    writer.add_image(f'{prefix}/Difference_Maps', plot_image, step, dataformats='HWC')

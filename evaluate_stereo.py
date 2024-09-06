@@ -76,7 +76,7 @@ def sequence_loss_valid(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700
     mag = torch.sum(flow_gt**2, dim=1).sqrt()
 
     # exclude extremly large displacements
-    valid = ((valid >= 0.5) & (mag < max_flow)).unsqueeze(0) #unsqueeze 차원 1 -> 0
+    valid = ((valid >= 0.5) & (mag < max_flow)).unsqueeze(1)
     assert valid.shape == flow_gt.shape, [valid.shape, flow_gt.shape]
     assert not torch.isinf(flow_gt[valid.bool()]).any()
 
@@ -85,10 +85,6 @@ def sequence_loss_valid(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700
         # We adjust the loss_gamma so it is consistent for any number of RAFT-Stereo iterations
         adjusted_loss_gamma = loss_gamma**(15/(n_predictions - 1))
         i_weight = adjusted_loss_gamma**(n_predictions - i - 1)
-        
-        # print("크기체크2")
-        # print(flow_preds[i].shape, flow_gt.shape)
-        
         i_loss = (flow_preds[i] - flow_gt).abs()
         assert i_loss.shape == valid.shape, [i_loss.shape, valid.shape, flow_gt.shape, flow_preds[i].shape]
         flow_loss += i_weight * i_loss[valid.bool()].mean()
@@ -244,7 +240,7 @@ def validate_kitti2(model, iters=32, mixed_prec=False):
     
 #     return loss_mean, d1, fused_disparity, disparity1, disparity2, origin, captured_rand_img_list, captured_img_list, flow_gt, disp_rand1, disp_rand2, mask_list, mask_mul_list
 
-eval_writer = SummaryWriter('runs/evaluation_longsequence')
+# eval_writer = SummaryWriter('runs/evaluation_longsequence')
 
 @torch.no_grad()
 def validate_carla(model, iters=32, mixed_prec=False):
@@ -266,6 +262,8 @@ def validate_carla(model, iters=32, mixed_prec=False):
         image2 = image2[None].cuda()
         image1_next = image1_next[None].cuda()
         image2_next = image2_next[None].cuda()
+        flow_gt = flow_gt.cuda()
+        valid_gt = valid_gt.cuda()
         
         if val_id == 0:
             initial_exp1 = generate_random_exposures(image1.shape[0], valid_mode=True).cuda()
@@ -281,13 +279,13 @@ def validate_carla(model, iters=32, mixed_prec=False):
             fused_disparity, disp1, disp2, cap_adj_img_list, shifted_exp = model(image1, image2, image1_next, image2_next, initial_exp1, initial_exp2, iters=iters, valid_mode=True)
             end = time.time()
         
-        #* Validation logging
-        eval_writer.add_image('gt_disp', visualize_flow_cmap(flow_gt), val_id)
-        eval_writer.add_image('disp1', visualize_flow_cmap(disp1), val_id)
-        eval_writer.add_image('disp2', visualize_flow_cmap(disp2), val_id)
-        eval_writer.add_image('Fused_disparity', visualize_flow_cmap(fused_disparity), val_id)
-        eval_writer.add_image('f1_adj_left', cap_adj_img_list[0][0], val_id)
-        eval_writer.add_image('f2_adj_left', cap_adj_img_list[1][0], val_id)
+        # #* Validation logging
+        # eval_writer.add_image('gt_disp', visualize_flow_cmap(flow_gt), val_id)
+        # eval_writer.add_image('disp1', visualize_flow_cmap(disp1), val_id)
+        # eval_writer.add_image('disp2', visualize_flow_cmap(disp2), val_id)
+        # eval_writer.add_image('Fused_disparity', visualize_flow_cmap(fused_disparity), val_id)
+        # eval_writer.add_image('f1_adj_left', cap_adj_img_list[0][0], val_id)
+        # eval_writer.add_image('f2_adj_left', cap_adj_img_list[1][0], val_id)
         
         save_image(visualize_flow_cmap(fused_disparity), f'Demo/cap_fused_disp03/fused_disp_{num_cnt}.png')
         save_image(visualize_flow_cmap(disp1[0]), f'Demo/cap_disp1/disp1_{num_cnt}.png')
@@ -337,6 +335,72 @@ def validate_carla(model, iters=32, mixed_prec=False):
     
     return loss_mean, d1, fused_disparity
 
+# * Validation Writer for logging
+eval_disp_writer = SummaryWriter('runs/eval_disp_model')
+@torch.no_grad()
+def validate_carla_warp(model, valid_cnt, iters=32, mixed_prec=False):
+    """Perform validation using the CARLA synthetic dataset"""
+    exp1 = torch.tensor([1.0]).cuda()
+    exp2 = torch.tensor([1.0]).cuda()
+    
+    # Freeze BatchNorm Layer
+    model.eval()
+    for module in model.modules():
+        if isinstance(module, torch.nn.BatchNorm2d):
+            module.train()
+    
+    val_dataset = datasets3.CARLASequenceDataset(image_set='validate')
+    torch.backends.cudnn.benchmark = True
+    
+    valid_loss_list = []
+    
+    for val_id in range(len(val_dataset)): # 100 sequence
+        
+        _, image1, image2, image1_next, image2_next, flow_gt, valid_gt = val_dataset[val_id]
+        
+        image1 = image1[None].cuda()
+        image2 = image2[None].cuda()
+        image1_next = image1_next[None].cuda()
+        image2_next = image2_next[None].cuda()
+        flow_gt = flow_gt[None].cuda()
+        valid_gt = valid_gt[None].cuda()
+        
+        with autocast(enabled=mixed_prec):
+            disp_predictions, fmap1, fmap1_next, warped_fmap_left, flow_L,fused_fmap1, cap1, cap1_next = model(image1=image1, image2=image2, image1_next=image1_next, image2_next=image2_next, exp_h=exp1, exp_l=exp2)
+
+        valid_loss = sequence_loss_valid(disp_predictions, flow_gt, valid_gt)
+        valid_loss_list.append(valid_loss.cpu().item())
+        
+    #* Validation logging
+    print(f"In validation exposure value : {exp1} {exp2}")
+    
+    eval_disp_writer.add_image('Valid/gt_disp', visualize_flow_cmap(flow_gt), valid_cnt)
+    eval_disp_writer.add_image('Valid/refined_disparity', visualize_flow_cmap(disp_predictions[-1]), valid_cnt)
+    eval_disp_writer.add_scalar('Valid/valid_loss', np.mean(valid_loss_list), valid_cnt)
+    
+    eval_disp_writer.add_image('Valid/Left F1', image1[0]**(1/2.2), valid_cnt)
+    eval_disp_writer.add_image('Valid/Left F2', image1_next[0]**(1/2.2), valid_cnt)
+    eval_disp_writer.add_image('Valid/Left cap', cap1[0]**(1/2.2), valid_cnt)
+    eval_disp_writer.add_image('Valid/Left cap_next', cap1_next[0]**(1/2.2), valid_cnt)
+    # logging feature map
+    visualize_flow(eval_disp_writer, flow_L, 'Valid/Flow', valid_cnt)
+    log_multiple_feature_map(eval_disp_writer, fmap1, 'Valid/Unwarped_Fmap1_L', valid_cnt, num_channels=1)
+    log_multiple_feature_map(eval_disp_writer, fmap1_next, 'Valid/Unwarped_Fmap2_L', valid_cnt, num_channels=1)
+    log_multiple_feature_map(eval_disp_writer, warped_fmap_left, 'Valid/Warped_Fmap2', valid_cnt, num_channels=1)
+    log_multiple_feature_map(eval_disp_writer, fused_fmap1, 'Valid/Fused_Fmap', valid_cnt, num_channels=1)
+    
+    # Feature map consine similarity
+    # print("@@@@@@@@@@@@Validation@@@@@@@@@@@@@@@")
+    # print(f"Consine similarity between first left and second left frame : {normalized_cosine_similarity(fmap1, fmap1_next)}")
+    # print(f"Consine similarity between first left and warped left frame : {normalized_cosine_similarity(fmap1, warped_fmap_left)}")
+    # print(f"Consine similarity between first left and fused left frame : {normalized_cosine_similarity(fmap1, fused_fmap1)}")
+    # print(f"Consine similarity between warped fmap left and fused left frame : {normalized_cosine_similarity(warped_fmap_left, fused_fmap1)}")
+    
+    # # logging atten score
+    # eval_disp_writer.add_image('Valid/Attention_score1', attn_scores1[0], valid_cnt)
+        
+    return np.mean(valid_loss_list)
+
 @torch.no_grad()
 def validate_carla_longsequence(model, iters=32, mixed_prec=False):
     """Perform validation using the CARLA synthetic dataset"""
@@ -365,17 +429,17 @@ def validate_carla_longsequence(model, iters=32, mixed_prec=False):
             
         fused_disp= padder.unpad(fused_disp).cpu().squeeze(0)
 
-        eval_writer.add_image('Demo/Fused_disparity', visualize_flow_cmap(fused_disp), num_cnt)
-        eval_writer.add_image('Demo/disp1', visualize_flow_cmap(disp1),num_cnt)
-        eval_writer.add_image('Demo/disp2', visualize_flow_cmap(disp2),num_cnt)  
-        eval_writer.add_image('Demo/disp1_r', visualize_flow_cmap(disp_cap[0]),num_cnt)
-        eval_writer.add_image('Demo/disp2_r', visualize_flow_cmap(disp_cap[1]),num_cnt)
-        eval_writer.add_image('Demo/gt', visualize_flow_cmap(flow_gt), num_cnt)
-        eval_writer.add_image('Demo/hdr_left', origin_img_list[0][0], num_cnt)
-        eval_writer.add_image('Demo/img1_rand_left', cap_rand_img_list[0][0], num_cnt)
-        eval_writer.add_image('Demo/img2_rand_left', cap_rand_img_list[1][0], num_cnt)
-        eval_writer.add_image('Demo/img1_adj_left', cap_adj_img_list[0][0], num_cnt)
-        eval_writer.add_image('Demo/img2_adj_left', cap_adj_img_list[1][0], num_cnt)
+        # eval_writer.add_image('Demo/Fused_disparity', visualize_flow_cmap(fused_disp), num_cnt)
+        # eval_writer.add_image('Demo/disp1', visualize_flow_cmap(disp1),num_cnt)
+        # eval_writer.add_image('Demo/disp2', visualize_flow_cmap(disp2),num_cnt)  
+        # eval_writer.add_image('Demo/disp1_r', visualize_flow_cmap(disp_cap[0]),num_cnt)
+        # eval_writer.add_image('Demo/disp2_r', visualize_flow_cmap(disp_cap[1]),num_cnt)
+        # eval_writer.add_image('Demo/gt', visualize_flow_cmap(flow_gt), num_cnt)
+        # eval_writer.add_image('Demo/hdr_left', origin_img_list[0][0], num_cnt)
+        # eval_writer.add_image('Demo/img1_rand_left', cap_rand_img_list[0][0], num_cnt)
+        # eval_writer.add_image('Demo/img2_rand_left', cap_rand_img_list[1][0], num_cnt)
+        # eval_writer.add_image('Demo/img1_adj_left', cap_adj_img_list[0][0], num_cnt)
+        # eval_writer.add_image('Demo/img2_adj_left', cap_adj_img_list[1][0], num_cnt)
         
         # print(cap_adj_img_list[1][0].shape)
         # print(cap_adj_img_list[1][0])

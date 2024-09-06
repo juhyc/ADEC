@@ -56,10 +56,10 @@ class StereoDataset(data.Dataset):
         else:
             valid = disp < 512
             
-        img1_left = read_gen(self.image_list[index][0])
-        img1_right = read_gen(self.image_list[index][1])
-        img2_left = read_gen(self.image_list[index + 1][0])
-        img2_right = read_gen(self.image_list[index + 1][1])
+        img1_left, _ = read_gen(self.image_list[index][0])
+        img1_right, _ = read_gen(self.image_list[index][1])
+        img2_left, _ = read_gen(self.image_list[index + 1][0])
+        img2_right, _ = read_gen(self.image_list[index + 1][1])
         # img2_left = read_gen(self.image_list[(index + 1) % len(self.image_list)][0])
         # img2_right = read_gen(self.image_list[(index + 1) % len(self.image_list)][1])
         
@@ -70,6 +70,7 @@ class StereoDataset(data.Dataset):
         
         disp = np.array(disp).astype(np.float32)
         
+        ###### Resizing for gpu memory############
         height, width = img1_left.shape[1], img1_left.shape[0]
         img1_left = cv2.resize(img1_left, (height // 2, width // 2))
         img1_right = cv2.resize(img1_right, (height // 2, width // 2))
@@ -77,6 +78,7 @@ class StereoDataset(data.Dataset):
         img2_right = cv2.resize(img2_right, (height // 2, width // 2))
         disp = cv2.resize(disp, (height // 2, width // 2))
         disp = disp / 2
+        ##########################################
         
         flow = np.stack([-disp, np.zeros_like(disp)], axis=-1)
         
@@ -90,13 +92,13 @@ class StereoDataset(data.Dataset):
         
         flow = flow[:1]
         
-        return self.image_list[index] + [self.disparity_list[disp_index]], img1_left, img1_right, img2_left, img2_right, flow, valid.float()
+        return self.image_list[index] + self.image_list[index + 1] + [self.disparity_list[disp_index]], img1_left, img1_right, img2_left, img2_right, flow, valid.float()
     
     def __len__(self):
         return len(self.image_list) // 2
 
 class CARLASequenceDataset(StereoDataset):
-    def __init__(self, root='datasets/CARLA', image_set='training'):
+    def __init__(self, root='datasets/CARLA2', image_set='training'):
         super(CARLASequenceDataset, self).__init__(reader=read_gen)
         assert os.path.exists(root), "Dataset root path does not exist."
         
@@ -105,27 +107,39 @@ class CARLASequenceDataset(StereoDataset):
         disp_list = []
         
         if image_set == 'training':
-            # experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))
-            # ! To test overfitting on specific dataset
-            experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment177')))
-            for experiment_folder in experiment_folders:
-                image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')))
-                image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')))
-                disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')))
-                
+            experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment[1-9]*')))
+            # To test overfitting on specific dataset
+            # experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment1')))
+                            
         else:
             image_set = 'test'
-            experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment33')))
-            for experiment_folder in experiment_folders:
-                image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')), key=sort_key_func)
-                image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')), key=sort_key_func)
-                disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')), key=sort_key_func)
+            experiment_folders = sorted(glob(os.path.join(root, image_set, 'Experiment1')))
+            
+        for experiment_folder in experiment_folders:
+            image1_list += sorted(glob(os.path.join(experiment_folder, 'hdr_left/*.npy')), key=sort_key_func)
+            image2_list += sorted(glob(os.path.join(experiment_folder, 'hdr_right/*.npy')), key=sort_key_func)
+            disp_list += sorted(glob(os.path.join(experiment_folder, 'ground_truth_disparity_left/*.npy')), key=sort_key_func)
+
+            # Check file
+            if not (len(image1_list) == len(image2_list) == len(disp_list)):
+                logging.warning(f"File count mismatch in {experiment_folder}: "
+                                f"image1_list={len(image1_list)}, image2_list={len(image2_list)}, disp_list={len(disp_list)}")
+                # min_len = min(len(hdr_left), len(hdr_right), len(disp_left))
+                # hdr_left = hdr_left[:min_len]
+                # hdr_right = hdr_right[:min_len]
+                # disp_left = disp_left[:min_len]
         
         for idx in range(0, len(image1_list) - 1, 2):  # Only take even index pairs
             if idx + 1 < len(image1_list):  # Ensure idx + 1 is within range
                 self.image_list.append([image1_list[idx], image2_list[idx]])
                 self.image_list.append([image1_list[idx + 1], image2_list[idx + 1]])
                 self.disparity_list.append(disp_list[idx])
+        
+        if not (len(self.image_list)/2 == len(self.disparity_list)):
+            logging.warning(f"Data count mismatch : image_list {self.image_list}, disparity_list {self.disparity_list}")
+        
+        print(f"image_list size: {len(self.image_list)}, disp_list size: {len(self.disparity_list)}")
+
 
 def fetch_dataloader(args):
     train_dataset = None
