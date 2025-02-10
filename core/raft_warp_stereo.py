@@ -183,9 +183,9 @@ class RAFTStereoFusion(nn.Module):
             # F(t+1) = F(t) + \Delta(t)
             coords1 = coords1 + delta_flow
 
-            # We do not need to upsample or output intermediate results in test_mode
-            if test_mode and itr < iters-1:
-                continue
+            # # We do not need to upsample or output intermediate results in test_mode
+            # if test_mode and itr < iters-1:
+            #     continue
 
             # upsample predictions
             if up_mask is None:
@@ -196,8 +196,8 @@ class RAFTStereoFusion(nn.Module):
             
             flow_predictions.append(flow_up)
 
-        if test_mode:
-            return coords1 - coords0, flow_up
+        # if test_mode:
+        #     return coords1 - coords0, flow_up
         
         return flow_predictions
 

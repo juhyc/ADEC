@@ -69,7 +69,23 @@ def soft_binary_threshold(image_tensor, alpha=0.1, beta=0.9):
     
     return mask
 
-def soft_binary_threshold_batch(image_tensor, alpha=0.05, beta=0.95):
+def rgb_to_grayscale(image_tensor):
+    """
+    Args:
+        image_tensor (Tensor): Batch of color image tensors (B, C, H, W).
+
+    Returns:
+        Tensor: Batch of grayscale images (B, 1, H, W).
+    """
+    r = image_tensor[:, 0:1, :, :]
+    g = image_tensor[:, 1:2, :, :]
+    b = image_tensor[:, 2:3, :, :]
+    
+    grayscale = 0.299 * r + 0.587 * g + 0.114 * b
+    return grayscale
+
+
+def soft_binary_threshold_batch(image_tensor, alpha=0.02, beta=0.98):
     """Soft-binary trapezoid function for PyTorch tensors in batch.
 
     Args:
@@ -84,7 +100,7 @@ def soft_binary_threshold_batch(image_tensor, alpha=0.05, beta=0.95):
     assert image_tensor.dim() == 4, "image_tensor should have shape [B, C, H, W]."
     
     # Using only the first channel for grayscale
-    grayscale = image_tensor[:, 0:1, :, :]
+    grayscale = rgb_to_grayscale(image_tensor)
 
     mask_low = (1/alpha) * grayscale
     mask_low = torch.where(grayscale >= alpha, torch.ones_like(grayscale), mask_low)

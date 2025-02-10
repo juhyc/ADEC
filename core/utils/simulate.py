@@ -134,6 +134,33 @@ def generate_random_exposures(batch_size, valid_mode=False, value = 1.0):
         
     return torch.tensor(exp_list)
 
+# def generate_random_exposures(batch_size, max_exposure_gap=2.5, value=1.0):
+#     exp_list = []
+    
+#     for _ in range(batch_size):
+#         exp1 = random.uniform(2**(-value), 2**(value))
+#         # 2번째 노출값을 생성하고, 두 노출값의 차이가 2.5배 이하가 되도록 조정
+#         exp2 = random.uniform(2**(-value), 2**(value))
+#         if exp1 > exp2:
+#             ratio = exp1 / exp2
+#         else:
+#             ratio = exp2 / exp1
+        
+#         # 만약 ratio가 max_exposure_gap보다 크다면 조정
+#         if ratio > max_exposure_gap:
+#             adjustment_ratio = (ratio - max_exposure_gap) / 2
+#             if exp1 > exp2:
+#                 exp1 /= (1 + adjustment_ratio)
+#                 exp2 *= (1 + adjustment_ratio)
+#             else:
+#                 exp1 *= (1 + adjustment_ratio)
+#                 exp2 /= (1 + adjustment_ratio)
+        
+#         exp_list.append([exp1, exp2])
+    
+#     return torch.tensor(exp_list)
+
+
 # ^ Generate random exposure factor based on HDR scene dynamic range
 def generate_adjusted_random_expousres(batch_size, d_r, gap_threshold = 0.5, large_gap  = 4, small_gap = 2):
     exp_list = []
@@ -179,7 +206,7 @@ def min_max_scale(image):
 
 # ^ Image Simulation class (noise modeling, adjust dynamic range)
 class ImageFormation:
-    def __init__(self, image, exp, range=6.0, device = 'cuda'):
+    def __init__(self, image, exp, range=4.0, device = 'cuda'):
         """Initialize image formation model.
             Set image to phi.
             Calculate gain, shutter time from exposure value 'exp'.
@@ -207,7 +234,7 @@ class ImageFormation:
         self.lower_bound = self.range_middle - self.interval
         self.higher_bound = self.range_middle + self.interval
         
-        # Max shutter speed 15ms
+        # Max shutter speed
         self.T_max = 5.0
         
         # Camera gain and shutter speed for each image in the batch
@@ -251,6 +278,8 @@ class ImageFormation:
         self.ldr_denom = noise_ldr
             
         normalize_ldr = (noise_ldr - noise_ldr.min())/(noise_ldr.max() - noise_ldr.min())
+        remap_ldr2hdr = lower_bound + normalize_ldr * ( higher_bound - lower_bound)
+        
         
         return normalize_ldr
     
@@ -291,6 +320,24 @@ class ImageFormation:
     #     return noise_ldr
     
 
+class QuantizeSTE(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, n=8):
+        # LDR image max value
+        max_val = 2**n - 1
+        
+        # Quantize
+        x_scaled = input * max_val
+        x_clamped = torch.clamp(x_scaled, 0, max_val)   
+        x_quantized = torch.round(x_clamped).to(torch.uint8)
+        
+        # Normalized to 0~1
+        x_dequantized = x_quantized / max_val
+        return x_dequantized
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output, None
   
     
 

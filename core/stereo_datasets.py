@@ -13,6 +13,7 @@ import random
 from pathlib import Path
 from glob import glob
 import os.path as osp
+import cv2
 
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
@@ -20,6 +21,10 @@ from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
 ###############################################
 # ! Original RAFT-stereo dataset class
 ###############################################
+
+def sort_key_func(file):
+    numbers = re.findall(r'\d+', os.path.basename(file))
+    return int(numbers[0]) if numbers else 0
 
 class StereoDataset(data.Dataset):
     def __init__(self, aug_params=None, sparse=False, reader=None):
@@ -45,73 +50,73 @@ class StereoDataset(data.Dataset):
         self.extra_info = []
 
     def __getitem__(self, index):
+        index = index * 2 % len(self.image_list)
+        disp_index = index // 2
+        disp = self.disparity_reader(self.disparity_list[disp_index])
 
-        if self.is_test:
-            img1 = frame_utils.read_gen(self.image_list[index][0])
-            img2 = frame_utils.read_gen(self.image_list[index][1])
-            img1 = np.array(img1).astype(np.uint8)[..., :3]
-            img2 = np.array(img2).astype(np.uint8)[..., :3]
-            img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
-            img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
-            return img1, img2, self.extra_info[index]
-
-        if not self.init_seed:
-            worker_info = torch.utils.data.get_worker_info()
-            if worker_info is not None:
-                torch.manual_seed(worker_info.id)
-                np.random.seed(worker_info.id)
-                random.seed(worker_info.id)
-                self.init_seed = True
-
-        index = index % len(self.image_list)
-        disp = self.disparity_reader(self.disparity_list[index])
         if isinstance(disp, tuple):
             disp, valid = disp
         else:
             valid = disp < 512
 
-        img1 = frame_utils.read_gen(self.image_list[index][0])
-        img2 = frame_utils.read_gen(self.image_list[index][1])
+        img1_left = frame_utils.read_gen(self.image_list[index][0])
+        img1_right = frame_utils.read_gen(self.image_list[index][1])
+        img2_left = frame_utils.read_gen(self.image_list[index + 1][0])
+        img2_right = frame_utils.read_gen(self.image_list[index + 1][1])
 
-        img1 = np.array(img1).astype(np.uint8)
-        img2 = np.array(img2).astype(np.uint8)
-
+        img1_left = np.array(img1_left).astype(np.uint8)
+        img1_right = np.array(img1_right).astype(np.uint8)
+        img2_left = np.array(img2_left).astype(np.uint8)
+        img2_right = np.array(img2_right).astype(np.uint8)
         disp = np.array(disp).astype(np.float32)
+
+        # 원본 이미지와 시차 맵의 높이와 너비를 가져옵니다.
+        h, w = img1_left.shape[:2]
+
+        # 모델의 입력 크기에 맞추기 위해 필요한 패딩 크기를 계산합니다.
+        desired_h = 376  # 모델이 예상하는 높이
+        desired_w = 1244  # 모델이 예상하는 너비
+
+        pad_h = desired_h - h
+        pad_w = desired_w - w
+
+        # 패딩이 필요한 경우에만 패딩을 적용합니다.
+        if pad_h > 0 or pad_w > 0:
+            # 이미지에 패딩 추가
+            img1_left = np.pad(img1_left, ((0, pad_h), (0, pad_w), (0, 0)), mode='edge')
+            img1_right = np.pad(img1_right, ((0, pad_h), (0, pad_w), (0, 0)), mode='edge')
+            img2_left = np.pad(img2_left, ((0, pad_h), (0, pad_w), (0, 0)), mode='edge')
+            img2_right = np.pad(img2_right, ((0, pad_h), (0, pad_w), (0, 0)), mode='edge')
+            # 시차 맵에 패딩 추가
+            disp = np.pad(disp, ((0, pad_h), (0, pad_w)), mode='edge')
+            valid = np.pad(valid, ((0, pad_h), (0, pad_w)), mode='edge')
+
+        # 만약 이미지가 예상 크기보다 크다면 크롭합니다.
+        if pad_h < 0 or pad_w < 0:
+            crop_h = desired_h
+            crop_w = desired_w
+            img1_left = img1_left[:crop_h, :crop_w]
+            img1_right = img1_right[:crop_h, :crop_w]
+            img2_left = img2_left[:crop_h, :crop_w]
+            img2_right = img2_right[:crop_h, :crop_w]
+            disp = disp[:crop_h, :crop_w]
+            valid = valid[:crop_h, :crop_w]
+
         flow = np.stack([-disp, np.zeros_like(disp)], axis=-1)
 
-        # grayscale images
-        if len(img1.shape) == 2:
-            img1 = np.tile(img1[...,None], (1, 1, 3))
-            img2 = np.tile(img2[...,None], (1, 1, 3))
-        else:
-            img1 = img1[..., :3]
-            img2 = img2[..., :3]
-
-        if self.augmentor is not None:
-            if self.sparse:
-                img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
-            else:
-                img1, img2, flow = self.augmentor(img1, img2, flow)
-
-        img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
-        img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
+        img1_left = torch.from_numpy(img1_left).permute(2, 0, 1).float()
+        img1_right = torch.from_numpy(img1_right).permute(2, 0, 1).float()
+        img2_left = torch.from_numpy(img2_left).permute(2, 0, 1).float()
+        img2_right = torch.from_numpy(img2_right).permute(2, 0, 1).float()
         flow = torch.from_numpy(flow).permute(2, 0, 1).float()
 
-        if self.sparse:
-            valid = torch.from_numpy(valid)
-        else:
-            valid = (flow[0].abs() < 512) & (flow[1].abs() < 512)
-
-        if self.img_pad is not None:
-            padH, padW = self.img_pad
-            img1 = F.pad(img1, [padW]*2 + [padH]*2)
-            img2 = F.pad(img2, [padW]*2 + [padH]*2)
-
+        valid = (flow[0].abs() < 512) & (flow[1].abs() < 512)
         flow = flow[:1]
-        
-        return self.image_list[index] + [self.disparity_list[index]], img1, img2, flow, valid.float()
 
+        return self.image_list[index] + self.image_list[index + 1] + [self.disparity_list[disp_index]], img1_left, img1_right, img2_left, img2_right, flow, valid.float()
 
+    
+    
     def __mul__(self, v):
         copy_of_self = copy.deepcopy(self)
         copy_of_self.flow_list = v * copy_of_self.flow_list
@@ -122,7 +127,6 @@ class StereoDataset(data.Dataset):
         
     def __len__(self):
         return len(self.image_list)
-
 
 class SceneFlowDatasets(StereoDataset):
     def __init__(self, aug_params=None, root='datasets', dstype='frames_cleanpass', things_test=False):
@@ -266,7 +270,43 @@ class KITTI(StereoDataset):
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
             self.image_list += [ [img1, img2] ]
             self.disparity_list += [ disp ]
+            
+class KITTI_Sequence(StereoDataset):
+    def __init__(self, aug_params=None, root='datasets/KITTI', image_set='training'):
+        super(KITTI_Sequence, self).__init__(aug_params, sparse=True, reader=frame_utils.readDispKITTI)
+        assert os.path.exists(root)
+        
+        self.image_list = []
+        self.disparity_list = []
 
+        if image_set == 'training':
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/*_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/*_10.png')))
+            image1_next_list = sorted(glob(os.path.join(root, image_set, 'image_2/*_11.png')))
+            image2_next_list = sorted(glob(os.path.join(root, image_set, 'image_3/*_11.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
+        else:
+            image_set = 'training'
+            image1_list = sorted(glob(os.path.join(root, image_set, 'image_2/000016_10.png')))
+            image2_list = sorted(glob(os.path.join(root, image_set, 'image_3/000016_10.png')))
+            image1_next_list = sorted(glob(os.path.join(root, image_set, 'image_2/000016_11.png')))
+            image2_next_list = sorted(glob(os.path.join(root, image_set, 'image_3/000016_11.png')))
+            disp_list = sorted(glob(os.path.join(root, 'training', 'disp_occ_0/000016_10.png')))
+            
+        for idx in range(len(image1_list)):
+            self.image_list.append([image1_list[idx], image2_list[idx]])
+            self.image_list.append([image1_next_list[idx], image2_next_list[idx]])
+            self.disparity_list.append(disp_list[idx])
+
+        # 데이터 개수 일관성 확인
+        if not (len(self.image_list) / 2 == len(self.disparity_list)):
+            logging.warning(f"Data count mismatch: image_list {len(self.image_list)}, disparity_list {len(self.disparity_list)}")
+
+        print(f"image_list size : {len(self.image_list)}, disp_list size: {len(self.disparity_list)}")
+        
+    def __len__(self):
+        return len(self.image_list) //2 
+    
 
 class Middlebury(StereoDataset):
     def __init__(self, aug_params=None, root='datasets/Middlebury', split='F'):
@@ -294,34 +334,34 @@ class Middlebury(StereoDataset):
 def fetch_dataloader(args):
     """ Create the data loader for the corresponding trainign set """
 
-    aug_params = {'crop_size': args.image_size, 'min_scale': args.spatial_scale[0], 'max_scale': args.spatial_scale[1], 'do_flip': False, 'yjitter': not args.noyjitter}
-    if hasattr(args, "saturation_range") and args.saturation_range is not None:
-        aug_params["saturation_range"] = args.saturation_range
-    if hasattr(args, "img_gamma") and args.img_gamma is not None:
-        aug_params["gamma"] = args.img_gamma
-    if hasattr(args, "do_flip") and args.do_flip is not None:
-        aug_params["do_flip"] = args.do_flip
+    # aug_params = {'crop_size': args.image_size, 'min_scale': args.spatial_scale[0], 'max_scale': args.spatial_scale[1], 'do_flip': False, 'yjitter': not args.noyjitter}
+    # if hasattr(args, "saturation_range") and args.saturation_range is not None:
+    #     aug_params["saturation_range"] = args.saturation_range
+    # if hasattr(args, "img_gamma") and args.img_gamma is not None:
+    #     aug_params["gamma"] = args.img_gamma
+    # if hasattr(args, "do_flip") and args.do_flip is not None:
+    #     aug_params["do_flip"] = args.do_flip
 
     train_dataset = None
     for dataset_name in args.train_datasets:
         if dataset_name.startswith("middlebury_"):
-            new_dataset = Middlebury(aug_params, split=dataset_name.replace('middlebury_',''))
+            new_dataset = Middlebury(split=dataset_name.replace('middlebury_',''))
         elif dataset_name == 'sceneflow':
-            clean_dataset = SceneFlowDatasets(aug_params, dstype='frames_cleanpass')
-            final_dataset = SceneFlowDatasets(aug_params, dstype='frames_finalpass')
+            clean_dataset = SceneFlowDatasets(dstype='frames_cleanpass')
+            final_dataset = SceneFlowDatasets(dstype='frames_finalpass')
             new_dataset = (clean_dataset*4) + (final_dataset*4)
             logging.info(f"Adding {len(new_dataset)} samples from SceneFlow")
         elif 'kitti' in dataset_name:
-            new_dataset = KITTI(aug_params)
+            new_dataset = KITTI_Sequence()
             logging.info(f"Adding {len(new_dataset)} samples from KITTI")
         elif dataset_name == 'sintel_stereo':
-            new_dataset = SintelStereo(aug_params)*140
+            new_dataset = SintelStereo()*140
             logging.info(f"Adding {len(new_dataset)} samples from Sintel Stereo")
         elif dataset_name == 'falling_things':
-            new_dataset = FallingThings(aug_params)*5
+            new_dataset = FallingThings()*5
             logging.info(f"Adding {len(new_dataset)} samples from FallingThings")
         elif dataset_name.startswith('tartan_air'):
-            new_dataset = TartanAir(aug_params, keywords=dataset_name.split('_')[2:])
+            new_dataset = TartanAir(keywords=dataset_name.split('_')[2:])
             logging.info(f"Adding {len(new_dataset)} samples from Tartain Air")
         train_dataset = new_dataset if train_dataset is None else train_dataset + new_dataset
 

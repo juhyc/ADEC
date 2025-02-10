@@ -1,0 +1,277 @@
+import os
+import numpy as np
+import cv2
+import torch
+from torch.utils.data import Dataset
+import logging
+
+from core.utils.read_utils import *
+from torch.utils.data import DataLoader, default_collate
+import re
+
+def sort_key_func(file):
+    numbers = re.findall(r'\d+', os.path.basename(file))
+    return int(numbers[0]) if numbers else 0
+
+def transfrom_points(points: np.ndarray, transform_mtx: np.ndarray):
+
+    """
+    Transform points using a 4x4 transformation matrix
+    Args:
+        points (np.ndarray): 3D points to transform
+        transform_mtx (np.ndarray): 4x4 transformation matrix
+    Returns:
+        np.ndarray: Transformed points
+    """
+    points = points.reshape(-1, 3)
+    points = points[(points[:, 0] != 0) | (points[:, 1] != 0)]
+    points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
+    points = transform_mtx @ points.T
+
+    return points[:3].T
+
+def transform_point_inverse(points: np.ndarray, transform_mtx: np.ndarray):
+
+    """
+    Transform points using a 4x4 transformation matrix
+    Args:
+        points (np.ndarray): 3D points to transform
+        transform_mtx (np.ndarray): 4x4 transformation matrix
+    Returns
+        np.ndarray: Transformed points
+    """
+    transform_mtx = np.linalg.pinv(transform_mtx)
+    return transfrom_points(points, transform_mtx)
+
+def project_points_on_camera(
+
+    points: np.ndarray,
+    focal_length: float,
+    cx: float,
+    cy: float,
+    image_width: float = 0,
+    image_height: float = 0,
+):
+
+    """
+    Project 3D points to 2D image plane
+
+    Args:
+        points (np.ndarray): 3D points to project
+        focal_length (float): Focal length of the camera
+        cx (float): Principal point x-coordinate
+        cy (float): Principal point y-coordinate
+        image_width (float): Image width, Optional
+        image_height (float): Image height, Optional
+    Returns:
+        np.ndarray: Projected points
+
+    """
+    points[:, 0] = points[:, 0] * focal_length / points[:, 2] + cx
+    points[:, 1] = points[:, 1] * focal_length / points[:, 2] + cy
+
+    if image_width > 0 and image_height > 0:
+        points = points[
+            (points[:, 0] >= 0)
+            & (points[:, 0] <= image_width - 1)
+            & (points[:, 1] <= image_height - 1)
+            & (points[:, 2] > 0)
+        ]
+
+    return points
+
+class RealDataset(Dataset):
+    def __init__(self, root='datasets/Real', transform=None, image_set = 'training', test_date_folder=None, image_scale_factor=0.25, point_sample_ratio=0.25):
+        self.image_list = []
+        self.transform = transform
+        self.camera_param = np.load('/home/user/juhyung/SAEC/datasets/Real/post.npz')
+        self.camera_param_path  ='/home/user/juhyung/SAEC/datasets/Real/post.npz'
+        
+        # Transform and downsample parameters
+        self.image_scale_factor = image_scale_factor
+        self.point_sample_ratio = point_sample_ratio
+        
+        self.transform_mtx = np.array([
+        [9.74168269e-01, -2.16619390e-02, -2.24781992e-01, 3.68182351e+01],
+        [2.23991311e-01, -3.38457838e-02, 9.74003263e-01, 2.71851960e+02],
+        [-2.87067220e-02, -9.99192285e-01, -2.81194025e-02, -2.35719906e+02],
+        [0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 1.00000000e+00]
+         ])
+
+        
+        date_folders = sorted(os.listdir(root)) # 날짜별 폴더
+        
+        if image_set == 'test':
+            # test인 경우 test_date_folder에 해당하는 폴더만 사용
+            if test_date_folder in date_folders:
+                date_folders = [test_date_folder]
+            else:
+                raise ValueError(f"Test date folder '{test_date_folder}' not found in dataset.")
+        
+        for date_folder in date_folders:
+            date_path = os.path.join(root, date_folder)
+            time_folders = sorted(os.listdir(date_path))  # 시간별 폴더
+            
+            for time_folder in time_folders:
+                folder_path = os.path.join(date_path, time_folder)
+                left_path = os.path.join(folder_path, 'left.npy')
+                right_path = os.path.join(folder_path, 'right.npy')
+                point_path = os.path.join(folder_path, 'points.npy')
+                
+
+                if os.path.exists(left_path) and os.path.exists(right_path) and os.path.exists(point_path):
+                    self.image_list.append((left_path, right_path, point_path))
+                else:
+                    print(f"Missing data in {folder_path}, skipping this folder.")
+
+        if image_set == 'training':
+            np.random.shuffle(self.image_list)  # training일 경우 전체 데이터를 섞
+        
+    def __len__(self):
+        return len(self.image_list) - 1  # Stereo 쌍을 위해 홀수 개는 제거
+    
+    def downsample_image(self, image, scale_factor):
+        new_height = int(image.shape[0] * scale_factor)
+        new_width = int(image.shape[1] * scale_factor)
+        return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    
+    def downsample_lidar_points(self, points, sample_ratio):
+        num_points = int(len(points) * sample_ratio)
+        sampled_indices = np.random.choice(len(points), num_points, replace=False)
+        return points[sampled_indices]
+
+    
+    def __getitem__(self, index):
+        # 첫번째 이미지쌍 불러오기
+        left_path1, right_path1, point_path1 = self.image_list[index]
+        left_data1 = np.load(left_path1)
+        right_data1 = np.load(right_path1)
+        point_data1 = np.load(point_path1).reshape(-1, 3)*1000 # mm
+        left1 = left_data1
+        right1 = right_data1
+        
+        # 두번째 이미지쌍 불러오기
+        left_path2, right_path2, point_path2 = self.image_list[index + 1]
+        left_data2 = np.load(left_path2)
+        right_data2 = np.load(right_path2)
+        # point_data2 = np.load(point_path2)
+        left2 = left_data2
+        right2 = right_data2
+        
+        # focal_length, baseline
+        focal_length = self.camera_param['k_left'][0,0] * self.image_scale_factor
+        baseline = np.abs(self.camera_param['T'][0,0])
+        
+        # Apply image downsampling
+        left1 = self.downsample_image(left_data1, self.image_scale_factor)
+        right1 = self.downsample_image(right_data1, self.image_scale_factor)
+        left2 = self.downsample_image(left_data2, self.image_scale_factor)
+        right2 = self.downsample_image(right_data2, self.image_scale_factor)
+        
+        # Apply Lidar point downsampling
+        points = self.downsample_lidar_points(point_data1, self.point_sample_ratio)
+        
+        
+        left_32bit_1 = convert_to_32bit_bayer_rg24_2(left1, left1.shape[1], left1.shape[0])
+        right_32bit_1 = convert_to_32bit_bayer_rg24_2(right1, right1.shape[1], right1.shape[0])
+        left_32bit_2 = convert_to_32bit_bayer_rg24_2(left2, left2.shape[1], left2.shape[0])
+        right_32bit_2 = convert_to_32bit_bayer_rg24_2(right2, right2.shape[1], right2.shape[0])
+        
+        # Debayering
+        left1_rgb = cv2.cvtColor(bayerToBgr(left_32bit_1), cv2.COLOR_BGR2RGB)
+        right1_rgb = cv2.cvtColor(bayerToBgr(right_32bit_1), cv2.COLOR_BGR2RGB)
+        left2_rgb = cv2.cvtColor(bayerToBgr(left_32bit_2), cv2.COLOR_BGR2RGB)
+        right2_rgb = cv2.cvtColor(bayerToBgr(right_32bit_2), cv2.COLOR_BGR2RGB)
+        
+        # Bilateral filtering
+        left1_rgb = bilateralFilter(left1_rgb)
+        right1_rgb = bilateralFilter(right1_rgb)
+        left2_rgb = bilateralFilter(left2_rgb)
+        right2_rgb = bilateralFilter(right2_rgb)
+        
+        # Rectification 수행
+        left1_rect, right1_rect = self.calibrate_frame(left1_rgb, right1_rgb, self.camera_param_path)
+        left2_rect, right2_rect = self.calibrate_frame(left2_rgb, right2_rgb, self.camera_param_path)
+        
+        # Tensor로 변환
+        left1_rect = torch.from_numpy(left1_rect).permute(2,0,1).float()
+        right1_rect = torch.from_numpy(right1_rect).permute(2,0,1).float()
+        left2_rect = torch.from_numpy(left2_rect).permute(2,0,1).float()
+        right2_rect = torch.from_numpy(right2_rect).permute(2,0,1).float()
+        
+        left1_rect = (left1_rect-left1_rect.min())/(left1_rect.max()-left1_rect.min())
+        right1_rect = (right1_rect-right1_rect.min())/(right1_rect.max()-right1_rect.min())
+        left2_rect = (left2_rect-left2_rect.min())/(left2_rect.max()-left2_rect.min())
+        right2_rect = (right2_rect-right2_rect.min())/(right2_rect.max()-right2_rect.min())
+        
+        # Apply transformations to Lidar points
+        points = transform_point_inverse(points, self.transform_mtx)
+        points = project_points_on_camera(points, focal_length, 684 * self.image_scale_factor, 557 * self.image_scale_factor, 
+                                          1440 * self.image_scale_factor, 928 * self.image_scale_factor)
+        
+        
+        
+        return [self.image_list[index], self.image_list[index + 1]], left1_rect, right1_rect, left2_rect, right2_rect, focal_length, baseline, points
+    
+    def calibrate_frame(self, left, right, post_path):
+        post_np = np.load(post_path)
+        
+        # Calibration 값 불러오기
+        k_left = post_np["k_left"]
+        dist_left = post_np["d_left"]
+        k_right = post_np["k_right"]
+        dist_right = post_np["d_right"]
+        R = post_np["R"]
+        T = post_np["T"]
+        
+        # Calibration 수행
+        calib_image_size = (1440, 928)
+        # input_image_size = (left.shape[1], left.shape[0])  # (width, height)
+        
+        R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
+            k_left, dist_left, k_right, dist_right, calib_image_size, R, T, alpha=0
+        )
+        
+        map1x, map1y = cv2.initUndistortRectifyMap(
+            k_left, dist_left, R1, P1, (1440, 928), cv2.CV_32FC1
+        )
+        map2x, map2y = cv2.initUndistortRectifyMap(
+            k_right, dist_right, R2, P2, (1440, 928), cv2.CV_32FC1
+        )
+        
+        left_rectified = cv2.remap(left, map1x, map1y, cv2.INTER_LINEAR)
+        right_rectified = cv2.remap(right, map2x, map2y, cv2.INTER_LINEAR)
+        
+        return left_rectified, right_rectified
+
+def collate_fn(batch):
+    # None 값을 제거하고 유효한 데이터만 반환
+    batch = [data for data in batch if data is not None]
+    
+    if len(batch) == 0:
+        return None
+    
+    return default_collate(batch)
+
+def fetch_real_dataloader(args):
+    
+    if 'real' in args.train_datasets:
+        train_dataset = RealDataset(root='datasets/Real', image_set='training')
+        print(f"Samples : {len(train_dataset)}")
+        logging.info(f"Adding {len(train_dataset)} training samples from Real")
+    if 'test_real' in args.train_datasets:
+        test_dataset = RealDataset(root='datasets/Real', image_set='test', test_date_folder='09_28_18_test3')
+        print(f"Samples : {len(test_dataset)}")
+        logging.info(f"Adding {len(test_dataset)} training samples from test_Real")
+
+    real_loader = DataLoader(
+        train_dataset if 'real' in args.train_datasets else test_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=('real' in args.train_datasets),  # training일 경우만 shuffle
+        num_workers=4, 
+        pin_memory=True, 
+        drop_last=True, 
+        collate_fn=collate_fn
+    )
+    
+    return real_loader

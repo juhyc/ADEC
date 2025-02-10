@@ -11,6 +11,7 @@ from core.utils.simulate import *
 from core.raft_warp_stereo import RAFTStereoFusion
 from core.utils.read_utils import prepare_inputs_custom
 from core.utils.utils import InputPadder
+from core.utils.mask import soft_binary_threshold_batch
 
 from ptlflow import get_model
 from ptlflow.utils import flow_utils
@@ -286,25 +287,6 @@ except:
 #     def forward(self, fmap1, fmap2):
 #         fused_fmap = self.attention(fmap1, fmap2)
 #         return fused_fmap
-    
-# * Test3
-class MultiScaleChannelAttention(nn.Module):
-    def __init__(self, in_channels, reduction=16):
-        super(MultiScaleChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels // reduction, 1, bias=False),
-            nn.ReLU(),
-            nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        avg_out = self.fc(self.avg_pool(x))
-        max_out = self.fc(self.max_pool(x))
-        out = avg_out + max_out
-        return out  # This returns the attention map
 
 # class AttentionalFeatureFusion(nn.Module):
 #     def __init__(self, in_channels, reduction=16):
@@ -337,6 +319,25 @@ class MultiScaleChannelAttention(nn.Module):
 
 #         return fused_fmap
 
+    
+# * Test3
+class MultiScaleChannelAttention(nn.Module):
+    def __init__(self, in_channels, reduction=16):
+        super(MultiScaleChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels // reduction, 1, bias=False),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        avg_out = self.fc(self.avg_pool(x))
+        max_out = self.fc(self.max_pool(x))
+        out = avg_out + max_out
+        return out  # This returns the attention map
 
 class AttentionalFeatureFusion(nn.Module):
     def __init__(self, in_channels, reduction=16):
@@ -358,8 +359,15 @@ class AttentionalFeatureFusion(nn.Module):
         info_fmap1 = self.compute_information(fmap1) 
         info_fmap2 = self.compute_information(fmap2)  
         
+        # scene_weight1 = torch.sigmoid(self.scene_weight1(info_fmap1))
+        # scene_weight2 = torch.sigmoid(self.scene_weight2(info_fmap2))
+        # Apply softmax : Normalize so that the sum of the two scene weights equals 1
         scene_weight1 = torch.sigmoid(self.scene_weight1(info_fmap1))
         scene_weight2 = torch.sigmoid(self.scene_weight2(info_fmap2))
+        total_weight = torch.cat([scene_weight1, scene_weight2], dim=1)
+        norm_weights = torch.softmax(total_weight, dim=1)
+        scene_weight1 = norm_weights[:, 0:1, :, :]
+        scene_weight2 = norm_weights[:, 1:2, :, :]
         
         mask_fmap2 = (fmap2 != 0).float()
 
@@ -369,6 +377,69 @@ class AttentionalFeatureFusion(nn.Module):
         fused_fmap = attn_fmap1 + attn_fmap2
 
         return fused_fmap
+    
+
+# Refine network : Only CNN
+# class FeatureRefiner(nn.Module):
+#     def __init__(self, in_channels, num_blocks=4):
+#         super(FeatureRefiner, self).__init__()
+#         layers = []
+#         for _ in range(num_blocks):
+#             layers.append(nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1))
+#             layers.append(nn.BatchNorm2d(in_channels))
+#             layers.append(nn.ReLU(inplace=True))
+        
+#         self.refine_net = nn.Sequential(*layers)
+    
+#     def forward(self, fused_fmap):
+#         return self.refine_net(fused_fmap)
+
+# Refine network : with residual block
+# class ResidualBlock(nn.Module):
+#     def __init__(self, in_channels):
+#         super(ResidualBlock, self).__init__()
+#         self.conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+#         self.bn1 = nn.BatchNorm2d(in_channels)
+#         self.relu = nn.ReLU(inplace=True)
+
+#         self.conv2 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+#         self.bn2 = nn.BatchNorm2d(in_channels)
+
+#     def forward(self, x):
+#         identity = x  # Residual connection
+
+#         out = self.conv1(x)
+#         out = self.bn1(out)
+#         out = self.relu(out)
+
+#         out = self.conv2(out)
+#         out = self.bn2(out)
+
+#         # Residual connection (identity + transformed output)
+#         out += identity
+#         out = self.relu(out)
+
+#         return out
+
+# class FeatureRefiner(nn.Module):
+#     def __init__(self, in_channels, num_blocks=4):
+#         super(FeatureRefiner, self).__init__()
+#         # num_blocks는 residual block의 개수를 지정
+#         self.residual_blocks = nn.Sequential(
+#             *[ResidualBlock(in_channels) for _ in range(num_blocks)]
+#         )
+#         self.final_conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+        
+#         # self.layernorm = nn.LayerNorm([in_channels, 1, 1], elementwise_affine=False)
+        
+#     def forward(self, fused_fmap):
+#         # 여러 Residual Block을 거친 후 마지막 Convolution
+#         refined_fmap = self.residual_blocks(fused_fmap)
+#         refined_fmap = self.final_conv(refined_fmap)
+            
+#         # refined_fmap = self.layernorm(refined_fmap)
+        
+#         return refined_fmap
 
 # Quantize STE method
 class QuantizeSTE(torch.autograd.Function):
@@ -390,6 +461,40 @@ class QuantizeSTE(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output, None
 
+class FeatureRefiner(nn.Module):
+    def __init__(self, in_channels):
+        super(FeatureRefiner, self).__init__()
+        
+        # 기본적인 conv layer로 feature 추출
+        self.conv1 = nn.Conv2d(in_channels, 128, kernel_size=3, padding=1)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(128, 64, kernel_size=3, padding=1)
+        self.relu2 = nn.ReLU(inplace=True)
+        
+        # Attention 메커니즘 추가 (필요시)
+        self.attention = nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        self.sigmoid = nn.Sigmoid()
+        
+        # Residual block로 refinement 적용
+        self.refine_conv = nn.Conv2d(64, in_channels, kernel_size=3, padding=1)
+        
+    def forward(self, fused_feature_map):
+        # Feature 추출
+        x = self.conv1(fused_feature_map)
+        x = self.relu1(x)
+        x = self.conv2(x)
+        x = self.relu2(x)
+        
+        # Attention 적용
+        attention_map = self.sigmoid(self.attention(x))
+        
+        # Refinement: 작은 correction map 생성
+        refinement_map = self.refine_conv(x)
+        
+        # Attention 가중치를 사용하여 feature map 수정
+        refined_feature_map = fused_feature_map + refinement_map * attention_map
+        
+        return refined_feature_map
 
 # RAFTStereo with attention feature fusion
 class RAFTStereoFusion(nn.Module):
@@ -399,11 +504,12 @@ class RAFTStereoFusion(nn.Module):
         context_dims = args.hidden_dims
         
         self.flow_model = get_model('rapidflow_it6', pretrained_ckpt='kitti').to(DEVICE)
-        self.flow_model.train()
+        
+        # self.refine_net = FeatureRefiner(in_channels=256)
         
         # Unfreeze pretrained model parameter 
-        for param in self.flow_model.parameters():
-            param.requires_grad = True
+        # for param in self.flow_model.parameters():
+        #     param.requires_grad = True
         
         # # Unfreeze the last few layers for fine-tuning
         # for param in list(self.flow_model.parameters())[-10:]:
@@ -423,8 +529,6 @@ class RAFTStereoFusion(nn.Module):
             
         self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', downsample=args.n_downsample)
         
-        # Attention based feature fusion module
-        self.attention_fusion = AttentionalFeatureFusion(in_channels=256)
     
     # Compute optical flow on consecutive frame
     def compute_optical_flow_batch(self, model, image_pairs):
@@ -441,6 +545,7 @@ class RAFTStereoFusion(nn.Module):
 
             with torch.no_grad():
                 predictions = model(inputs)
+                
 
             # Extract the flows
             flows = predictions['flows']
@@ -450,7 +555,7 @@ class RAFTStereoFusion(nn.Module):
     
     # Resize flow to the feature map size
     def resize_flow(self, flow, target_size):
-        resized_flow = F.interpolate(flow, size=target_size, mode='bilinear', align_corners=True)
+        resized_flow = F.interpolate(flow, size=target_size, mode='bilinear', align_corners=False)
         
         scale_factor_h = target_size[0] / flow.size(2)
         scale_factor_w = target_size[1] / flow.size(3)
@@ -459,6 +564,17 @@ class RAFTStereoFusion(nn.Module):
         resized_flow[:, 1, :, :] *= scale_factor_h  
         
         return resized_flow
+    
+    def resize_soft_binary_mask(self, mask, feature_map):
+    # mask: torch.Size([B, 1, H_mask, W_mask])
+    # feature_map: torch.Size([B, C, H_feature, W_feature])
+
+        target_size = feature_map.shape[-2:]  # [H_feature, W_feature]
+        
+        resized_mask = F.interpolate(mask, size=target_size, mode='bilinear', align_corners=False)
+        
+        
+        return resized_mask
     
     
     # Warp feature map using resized flow
@@ -477,7 +593,7 @@ class RAFTStereoFusion(nn.Module):
         
         grid = grid.permute(0, 2, 3, 1)  # [n, h, w, 2]
         
-        warped_feature_map = F.grid_sample(feature_map, grid, mode='bilinear', padding_mode='zeros', align_corners=True)
+        warped_feature_map = F.grid_sample(feature_map, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
     
         return warped_feature_map
 
@@ -509,15 +625,21 @@ class RAFTStereoFusion(nn.Module):
         up_flow = torch.sum(mask * up_flow, dim=2)
         up_flow = up_flow.permute(0, 1, 4, 2, 5, 3)
         return up_flow.reshape(N, D, factor*H, factor*W)
+    
+    def balance_loss(self, fmap1, fmap2):
+        # feature map variance loss
+        info_diff = torch.abs(fmap1.var(dim=[2, 3]) - fmap2.var(dim=[2, 3]))
+        return torch.mean(info_diff)
+    
+    def normalize_feature_map(self, fmap):
+        mean = fmap.mean(dim=(2, 3), keepdim=True)
+        std = fmap.std(dim=(2, 3), keepdim=True) + 1e-6  
+        fmap_normalized = (fmap - mean) / std
+        return fmap_normalized
 
     def forward(self, image1, image2, image1_next, image2_next, exp_h, exp_l, iters=32, flow_init=None, test_mode=False):
-        # Normalzie input image
-        # image1 = (2 * (image1 / 255.0) - 1.0).contiguous()
-        # image2 = (2 * (image2 / 255.0) - 1.0).contiguous()
-        # image1_next = (2 * (image1_next / 255.0) - 1.0).contiguous()
-        # image2_next = (2 * (image2_next / 255.0) - 1.0).contiguous()
         
-        # Noise modeling
+        #* Noise modeling
         phi_l_exph = ImageFormation(image1, exp_h, device='cuda')
         phi_r_exph = ImageFormation(image2, exp_h, device='cuda')
         phi_l_expl = ImageFormation(image1_next, exp_l, device='cuda')
@@ -528,20 +650,36 @@ class RAFTStereoFusion(nn.Module):
         image1_next = QuantizeSTE.apply(phi_l_expl.noise_modeling(), 8)
         image2_next = QuantizeSTE.apply(phi_r_expl.noise_modeling(), 8)
         
+        # For logging simulated LDR images
         cap1, cap1_next = image1, image1_next
+        cap2, cap2_next = image2, image2_next
+        cap_img_list = [cap1, cap2, cap1_next, cap2_next]
         
+        #* Calculate softbinary mask 
+        image1_mask = soft_binary_threshold_batch(image1)
+        image2_mask = soft_binary_threshold_batch(image2)
+        image1_next_mask = soft_binary_threshold_batch(image1_next)
+        image2_next_mask = soft_binary_threshold_batch(image2_next)
+              
+        # Normalize input image
         image1 = (2 * image1 - 1.0).contiguous()
         image2 = (2 * image2 - 1.0).contiguous()
         image1_next = (2 * image1_next - 1.0).contiguous()
         image2_next = (2 * image2_next - 1.0).contiguous()
         
-        # Extract features
+        #* Extract features
         fmap1, fmap2 = self.fnet([image1, image2])
         fmap1_next, fmap2_next = self.fnet([image1_next, image2_next])
-        # print(f"In diap_recon_model.py : image1_size : {image1.shape}, image2_size : {image2.shape}, fmap1_size : {fmap1.shape}, fmap1_next{fmap1_next.shape}")
-                
+        
+        # Feature map normalize
+        # fmap1 = self.normalize_feature_map(fmap1)
+        # fmap2 = self.normalize_feature_map(fmap2)
+        # fmap1_next = self.normalize_feature_map(fmap1_next)
+        # fmap2_next = self.normalize_feature_map(fmap2_next)
+        # print(f"In diap_recon_model.py : image1_size : {image1.shape}, image2_size : {image2.shape}, fmap1_size : {fmap1.shape}, fmap1_next{fmap1_next.shape}")       
+        
+        # * Compute flow between Frame1 and Frame2
         with autocast(enabled=self.args.mixed_precision):
-            # Compute flow between Frame1 and Frame2
             img_pair_left = [(image1[i], image1_next[i]) for i in range(image1.shape[0])]
             img_pair_right = [(image2[i], image2_next[i]) for i in range(image2.shape[0])]
             flow_left = self.compute_optical_flow_batch(self.flow_model, img_pair_left)
@@ -549,16 +687,40 @@ class RAFTStereoFusion(nn.Module):
             
         warped_fmap_left = self.warp_feature_map(fmap1_next, flow_left)
         warped_fmap_right = self.warp_feature_map(fmap2_next, flow_right)
-                
-        # Feature Fusion
-        fused_fmap1 = self.attention_fusion(fmap1, warped_fmap_left)
-        fused_fmap2 = self.attention_fusion(fmap2, warped_fmap_right)
         
-        # print("fused_fmap1 shape:", fused_fmap1.shape)
-        # print("fused_fmap2 shape:", fused_fmap2.shape)
-        # print("fmap1 device:", fmap1.device)
-        # print("warped_fmap_left device:", warped_fmap_left.device)
+        #* Resizing mask
+        resized_image1_mask = self.resize_soft_binary_mask(image1_mask, fmap1) 
+        resized_image2_mask = self.resize_soft_binary_mask(image2_mask, fmap2) 
+        image1_next_mask = self.resize_soft_binary_mask(image1_next_mask, fmap1)
+        image2_next_mask = self.resize_soft_binary_mask(image2_next_mask, fmap2)
+        # Warp mask
+        resized_image1_next_mask = self.warp_feature_map(image1_next_mask, flow_left) 
+        resized_image2_next_mask = self.warp_feature_map(image2_next_mask, flow_right) 
+        
+        # print(f"Mask value : {resized_image1_mask.min()} {resized_image1_mask.max()}")
+        # print(f"Mask shape : {resized_image1_mask.shape}")
+        # print(f"Mask2 value : {resized_image1_next_mask.min()} {resized_image1_mask.max()}")
+        # print(f"Mask2 shape : {resized_image1_next_mask.shape}")
                 
+        # *Feature Fusion with attention model
+        # fused_fmap1 = self.attention_fusion(fmap1, warped_fmap_left)
+        # fused_fmap2 = self.attention_fusion(fmap2, warped_fmap_right)
+        
+        # *Feature Fusion with confidence mask
+        epsilon = 1e-6
+        mask_sum1 = resized_image1_mask + resized_image1_next_mask
+        mask_sum2 = resized_image2_mask + resized_image2_next_mask
+        mask_sum_safe1 = torch.where(mask_sum1 == 0, epsilon * torch.ones_like(mask_sum1), mask_sum1)
+        mask_sum_safe2 = torch.where(mask_sum2 == 0, epsilon * torch.ones_like(mask_sum2), mask_sum2)
+        fused_fmap1 = (resized_image1_mask * fmap1 + resized_image1_next_mask * warped_fmap_left)/mask_sum_safe1
+        fused_fmap2 = (resized_image2_mask * fmap2 + resized_image2_next_mask * warped_fmap_right)/mask_sum_safe2
+        
+        before_refined_fmap1 = fused_fmap1
+        
+        # # *Refine feature map
+        # fused_fmap1 = self.refine_net(fused_fmap1)
+        # fused_fmap2 = self.refine_net(fused_fmap2)
+        
         # run the context network
         with autocast(enabled=self.args.mixed_precision):
             cnet_list = self.cnet(image1, num_layers=self.args.n_gru_layers)
@@ -568,10 +730,10 @@ class RAFTStereoFusion(nn.Module):
 
         if self.args.corr_implementation == "reg": # Default
             corr_block = CorrBlock1D
-            fmap1, fmap2 = fmap1.float(), fmap2.float()
+            fused_fmap1, fused_fmap2 = fused_fmap1.float(), fused_fmap2.float()
         elif self.args.corr_implementation == "alt": # More memory efficient than reg
             corr_block = PytorchAlternateCorrBlock1D
-            fmap1, fmap2 = fmap1.float(), fmap2.float()
+            fused_fmap1, fused_fmap2 = fused_fmap1.float(), fused_fmap2.float()
         elif self.args.corr_implementation == "reg_cuda": # Faster version of reg
             corr_block = CorrBlockFast1D
         elif self.args.corr_implementation == "alt_cuda": # Faster version of alt
@@ -622,4 +784,4 @@ class RAFTStereoFusion(nn.Module):
         # print(f"fused fmap shape : {fused_fmap1.shape}")
         # print(f"atten_score shape : {attn_scores1.shape}")
         
-        return flow_predictions, fmap1, fmap1_next, warped_fmap_left, flow_left, fused_fmap1, cap1, cap1_next
+        return flow_predictions, fmap1, fmap1_next, before_refined_fmap1, flow_left, fused_fmap1, cap_img_list
