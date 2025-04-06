@@ -151,7 +151,7 @@
               </span> -->
               <!-- Code Link. -->
               <span class="link-block">
-                <a href="https://github.com/ADEC"
+                <a href="https://github.com/juhyc/ADEC"
                    class="external-link button is-normal is-rounded is-dark">
                   <span class="icon">
                       <i class="fab fa-github"></i>
@@ -260,31 +260,24 @@
         <h2 class="title is-3">Abstract</h2>
         <div class="content has-text-justified">
           <p>
-            We present the first method capable of photorealistically reconstructing a non-rigidly
-            deforming scene using photos/videos captured casually from mobile phones.
+            Achieving robust stereo 3D imaging under diverse illumination conditions is challenging due to the limited
+            dynamic range of conventional cameras, causing existing stereo depth estimation methods to suffer from under- or over-exposed images.
           </p>
           <p>
-            Our approach augments neural radiance fields
-            (NeRF) by optimizing an
-            additional continuous volumetric deformation field that warps each observed point into a
-            canonical 5D NeRF.
-            We observe that these NeRF-like deformation fields are prone to local minima, and
-            propose a coarse-to-fine optimization method for coordinate-based models that allows for
-            more robust optimization.
-            By adapting principles from geometry processing and physical simulation to NeRF-like
-            models, we propose an elastic regularization of the deformation field that further
-            improves robustness.
+            In this paper, we propose dual-
+            exposure stereo that combines auto-exposure control and
+            dual-exposure bracketing to achieve stereo 3D imaging with
+            extended dynamic range. Specifically, we capture stereo im-
+            age pairs with alternating dual exposures, which automat-
+            ically adapt to scene illumination and effectively distribute
+            the scene dynamic range across the dual-exposure frames.
+            We then estimate stereo depth from these dual-exposure
+            stereo images by compensating for motion between con-
+            secutive frames.
           </p>
           <p>
-            We show that <span class="dnerf">Nerfies</span> can turn casually captured selfie
-            photos/videos into deformable NeRF
-            models that allow for photorealistic renderings of the subject from arbitrary
-            viewpoints, which we dub <i>"nerfies"</i>. We evaluate our method by collecting data
-            using a
-            rig with two mobile phones that take time-synchronized photos, yielding train/validation
-            images of the same pose at different viewpoints. We show that our method faithfully
-            reconstructs non-rigidly deforming scenes and reproduces unseen views with high
-            fidelity.
+            To validate our approach, we develop a robotic vision system, acquire real-world HDR stereo video
+            datasets, and generate additional synthetic datasets. Experimental results demonstrate that our method outperforms existing exposure control methods.
           </p>
         </div>
       </div>
@@ -292,7 +285,7 @@
     <!--/ Abstract. -->
 
     <!-- Paper video. -->
-    <div class="columns is-centered has-text-centered">
+    <!-- <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
         <h2 class="title is-3">Video</h2>
         <div class="publication-video">
@@ -300,7 +293,7 @@
                   frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
         </div>
       </div>
-    </div>
+    </div> -->
     <!--/ Paper video. -->
   </div>
 </section>
