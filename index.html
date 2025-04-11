@@ -185,7 +185,7 @@
                 type="video/mp4">
       </video>
       <h2 class="subtitle has-text-centered">
-        <span class="dnerf">Visual comparison of depth estimation under different exposure strategies.</span>
+        <!-- <span class="dnerf">Visual comparison of depth estimation under different exposure strategies.</span> -->
         Images and disparity maps captured using AverageAE (a, c) and ADEC (b, d), with LiDAR ground truth shown in (e).
       </h2>
     </div>
@@ -303,25 +303,25 @@
 
     <div class="columns is-centered">
 
-      <!-- Visual Effects. -->
+      <!-- Synthetic datasets. -->
       <div class="column">
         <div class="content">
-          <h2 class="title is-3">Visual Effects</h2>
+          <h2 class="title is-3">Synthetic datasets</h2>
           <p>
-            Using <i>nerfies</i> you can create fun visual effects. This Dolly zoom effect
-            would be impossible without nerfies since it would require going through a wall.
+            Synthetic HDR stereo dataset generated using the CARLA simulator.
+            The video shows a sequence of left images and corresponding ground-truth depth maps.
           </p>
           <video id="dollyzoom" autoplay controls muted loop playsinline height="100%">
-            <source src="./static/videos/dollyzoom-stacked.mp4"
+            <source src="./static/videos/synthetic_dataset_samples.mp4"
                     type="video/mp4">
           </video>
         </div>
       </div>
-      <!--/ Visual Effects. -->
+      <!--/ Synthetic datasets. -->
 
-      <!-- Matting. -->
+      <!-- Real datasets. -->
       <div class="column">
-        <h2 class="title is-3">Matting</h2>
+        <h2 class="title is-3">Real datasets</h2>
         <div class="columns is-centered">
           <div class="column content">
             <p>
@@ -337,7 +337,7 @@
         </div>
       </div>
     </div>
-    <!--/ Matting. -->
+    <!--/ Real dataset. -->
 
     <!-- Animation. -->
     <div class="columns is-centered">
