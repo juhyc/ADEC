@@ -193,7 +193,7 @@
 </section>
 
 
-<section class="hero is-light is-small">
+<!-- <section class="hero is-light is-small">
   <div class="hero-body">
     <div class="container">
       <div id="results-carousel" class="carousel results-carousel">
@@ -248,7 +248,7 @@
       </div>
     </div>
   </div>
-</section>
+</section> -->
 
 
 <section class="section">
@@ -342,10 +342,10 @@
     <!-- Animation. -->
     <div class="columns is-centered">
       <div class="column is-full-width">
-        <h2 class="title is-3">Animation</h2>
+        <h2 class="title is-3">Extended dynamic range 3D imaging</h2>
 
         <!-- Interpolating. -->
-        <h3 class="title is-4">Interpolating states</h3>
+        <!-- <h3 class="title is-4">Interpolating states</h3>
         <div class="content has-text-justified">
           <p>
             We can also animate the scene by interpolating the deformation latent codes of two input
@@ -375,25 +375,26 @@
             <p class="is-bold">End Frame</p>
           </div>
         </div>
-        <br/>
+        <br/> -->
         <!--/ Interpolating. -->
 
         <!-- Re-rendering. -->
-        <h3 class="title is-4">Re-rendering the input video</h3>
+        <h3 class="title is-4"></h3>
         <div class="content has-text-justified">
           <p>
-            Using <span class="dnerf">Nerfies</span>, you can re-render a video from a novel
-            viewpoint such as a stabilized camera by playing back the training deformations.
+            <p>
+              The video showcases a comparison between two exposure control strategies in real-world scenes. 
+              (a) shows a video sequence captured using <strong>AverageAE</strong>, a strategy that mimics the behavior of conventional auto-exposure algorithms in standard cameras. 
+              (b) presents images captured with our proposed method, <strong>ADEC</strong>, which dynamically adjusts dual exposures to better cover the scene's dynamic range. 
+              (c) and (d) show the corresponding disparity maps estimated from (a) and (b), respectively. 
+              (e) visualizes the pixel intensity histogram of the two exposures used in ADEC (orange and purple), overlaid on the true scene radiance derived from raw HDR image. 
+              This demonstrates how ADEC adaptively distributes exposures to better capture both dark and bright regions, resulting in improved depth estimation.
+              </p>
           </p>
         </div>
         <div class="content has-text-centered">
-          <video id="replay-video"
-                 controls
-                 muted
-                 preload
-                 playsinline
-                 width="75%">
-            <source src="./static/videos/replay.mp4"
+          <video id="dr_extension_real" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/dr_extension_real.mp4"
                     type="video/mp4">
           </video>
         </div>
