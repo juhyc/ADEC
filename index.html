@@ -339,6 +339,38 @@
     </div>
     <!--/ Real dataset. -->
 
+    <!-- Auto Dual Exposure Control. -->
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Auto Dual Exposure Control</h2>
+
+        <!-- ADEC. -->
+        <h3 class="title is-4"></h3>
+        <div class="content has-text-justified">
+          <p>
+            <p>
+              The video showcases our Auto Dual Exposure Control (ADEC).
+              </p>
+              
+              Our Auto Dual Exposure Control (ADEC) algorithm analyzes the histogram and skewness of two captured images to adaptively adjust exposure values based on scene characteristics.
+              If the scene's dynamic range exceeds that of the camera, ADEC increases the exposure gap to capture complementary highlight and shadow details.
+              If the scene's dynamic range is within the camera's limits or the case is uncertain, the algorithm adjusts each exposure toward a balanced state by minimizing skewness.
+              This dynamic adjustment allows ADEC to optimize exposure distribution, improving performance in downstream tasks such as depth estimation in extreme dynamic range scenes.
+              
+          </p>
+        </div>
+        <div class="content has-text-centered">
+          <video id="dr_extension_real" autoplay controls muted loop playsinline height="100%">
+            <source src="./static/videos/exposure_control_method.mp4"
+                    type="video/mp4">
+          </video>
+        </div>
+        <!--/ADEC. -->
+
+      </div>
+    </div>
+
+
     <!-- Animation. -->
     <div class="columns is-centered">
       <div class="column is-full-width">
