@@ -370,6 +370,37 @@
       </div>
     </div>
 
+        <!-- Dual Exposure stereo. -->
+        <div class="columns is-centered">
+          <div class="column is-full-width">
+            <h2 class="title is-3">Dual-exposure Stereo Estimation</h2>
+    
+            <!-- Dual-exposure stereo. -->
+            <h3 class="title is-4"></h3>
+            <div class="content has-text-justified">
+              <p>
+                <p>
+                  This video illustrates our dual-exposure stereo disparity estimation.
+                  </p>
+                  
+                  We use two stereo image pairs with different exposures to handle challenging lighting conditions. 
+                  To compensate for object and camera motion between frames, we estimate optical flow and temporally align features.
+                  By fusing features from both exposures based on pixel intensity, we construct disparity volumes that capture both highlight and shadow details. 
+                  This enables robust depth estimation even under extreme dynamic range.
+                  
+              </p>
+            </div>
+            <div class="content has-text-centered">
+              <video id="dr_extension_real" autoplay controls muted loop playsinline height="100%">
+                <source src="./static/videos/exposure_control_method.mp4"
+                        type="video/mp4">
+              </video>
+            </div>
+            <!--/Dual-exposure stereo. -->
+    
+          </div>
+        </div>
+
 
     <!-- Animation. -->
     <div class="columns is-centered">
