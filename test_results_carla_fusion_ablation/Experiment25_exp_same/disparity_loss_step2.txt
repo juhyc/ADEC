@@ -1,7 +1,0 @@
-disp_raft_exp1_mae: 0.9205509424209595
-disp_raft_exp2_mae: 1.3755342960357666
-Dual_disparity_mae: 0.9853717088699341
-disp_expfusion_w_flow_mae: 0.99857097864151
-disp_expfusion_wo_flow_mae: 1.2352923154830933
-disp_dispfusion_w_flow_mae: 0.9264792799949646
-disp_dispfusion_wo_flow_mae: 1.1176865100860596

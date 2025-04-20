@@ -35,17 +35,6 @@ def show_dataloader_image(dataloader):
     left_mono, right_mono, left_stereo, right_stereo, disparity = batch
     show_images([left_mono, right_mono, left_stereo, right_stereo, disparity])
     
-   
-def visualize_mask(batch_image):
-    
-    image_tensor = batch_image[0].clone().detach()
-    image = image_tensor.cpu().numpy().squeeze()
-    
-    colored_image = plt.cm.gray(image)
-    colored_image = (colored_image[..., : 3] * 255).astype(np.uint8)
-    colored_image = np.transpose(colored_image, (2,0,1))
-    
-    return colored_image
     
 # * Visualization flow_prediction during Training
 def visualize_flow_cmap(batch_image):
@@ -137,6 +126,30 @@ def visualize_disparity_with_colorbar_svg(disp_map, vmin=None, vmax=None, norm=F
 
     return fig
 
+def visualize_disparity_only(disp_map, vmin=None, vmax=None, norm=False):
+    # Clone and detach the image tensor, then move it to CPU
+    image_tensor = -disp_map[0].clone().detach()
+    image = image_tensor.cpu().numpy().squeeze()
+    
+    # Normalize if requested
+    if norm:
+        image = (image - image.min()) / (image.max() - image.min())
+    
+    # Set vmin and vmax if they are not provided
+    if vmin is None:
+        vmin = image.min()
+    if vmax is None:
+        vmax = image.max()
+        
+    # Create a figure for the disparity map only
+    fig, ax = plt.subplots(figsize=(6, 3), dpi=200)
+    cmap = plt.cm.magma
+    ax.imshow(image, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.axis('off')  # Hide axes
+
+    return fig
+
+
 def visualize_lidar_with_colorbar(batch_image, vmin=None, vmax=None, norm=False, title='Lidar'):
     image_tensor = batch_image[0].clone().detach()
     image = image_tensor.cpu().numpy().squeeze()
@@ -202,7 +215,7 @@ def visualize_flow_cmap_with_colorbar(batch_image,  figsize=(16, 10), dpi=100, c
     
     fig.colorbar(cax, aspect = colorbar_aspect, shrink = colorbar_length)
     
-    # TensorBoard에 로깅하기 위해 이미지를 PIL 형식으로 변환
+    # For tensorboard logging
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches = 'tight')
     buf.seek(0)
@@ -212,21 +225,49 @@ def visualize_flow_cmap_with_colorbar(batch_image,  figsize=(16, 10), dpi=100, c
     
     return torch.tensor(image/255.0).float()
 
-def visualize_mask(mask):
+
+def visualize_mask(writer, batch_image, tag, step):
     
-    mask_tensor = mask[0].clone().detach()
+    image_tensor = batch_image[0].clone().detach()
+    image = image_tensor.cpu().numpy().squeeze()
     
-    mask = mask_tensor.cpu().numpy().squeeze()
+    colored_image = plt.cm.gray(image)
+    colored_image = (colored_image[..., : 3] * 255).astype(np.uint8)
+    colored_image = np.transpose(colored_image, (2,0,1))
     
-    mask_image = plt.cm.gray(mask)
-    mask_image = (mask_image[..., : 3] * 255).astype(np.uint8)
-    mask_image = np.transpose(mask_image, (2,0,1))
-    
-    return mask_image
+    writer.add_image(tag, colored_image, step)
 
 def log_mask_to_tensorboard(writer, mask_batch, tag, step):
 
     mask_image = mask_batch[0].clone().detach().cpu().numpy().squeeze()
+
+    mask_image_normalized = (mask_image - mask_image.min()) / (mask_image.max() - mask_image.min() + 1e-8)
+
+    fig, ax = plt.subplots(figsize=(6, 3))
+
+    im = ax.imshow(mask_image_normalized, cmap='gray', vmin=0, vmax=1)
+    ax.axis('off')
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes('right', size='5%', pad=0.05)
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label('Mask Value')
+
+    plt.tight_layout(pad=0)
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+    buf.seek(0)
+
+    image = Image.open(buf).convert('RGB')
+    image = transforms.ToTensor()(image)
+
+    writer.add_image(tag, image, global_step=step)
+    
+def log_mask_to_tensorboard2(writer, mask_batch, tag, step):
+
+    mask_image = mask_batch[0][0].clone().detach().cpu().numpy()
 
     mask_image_normalized = (mask_image - mask_image.min()) / (mask_image.max() - mask_image.min() + 1e-8)
 
@@ -448,40 +489,38 @@ def visualize_tensor_with_DR(writer, step, tag, hdr, ldr1, ldr2):
 
     # plt.subplots_adjust(wspace=0.2, hspace=0.2)
 
-    # 이미지로 변환하여 TensorBoard에 기록
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}/Dynamic Range', image_buf, step, dataformats='HWC')
     plt.close()
 
 def visualize_DR_overay_3img(writer, step, tag, hdr, ldr1, ldr2):
-    # 각 이미지를 numpy 배열로 변환
+    # Image to numpy array
     image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
     image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
     image_np_ldr2 = ldr2.squeeze(0).permute(1,2,0).cpu().numpy()
 
-    # 동적 범위 계산
+    # Dynamic range
     hdr_dr = image_np_hdr.max()
     ldr_dr1 = image_np_ldr1.max() / image_np_ldr1.min()
     ldr_dr2 = image_np_ldr2.max() / image_np_ldr2.min()
 
-    # 히스토그램 시각화
+    # Visualize histogream
     plt.figure(figsize=(18, 6))
     plt.title('Dynamic Range Visualization')
 
-    # HDR 이미지의 히스토그램 추가 (넓은 범위로 분포)
     plt.hist(image_np_hdr.ravel(), bins=512, color='orange', alpha=0.5, label=f'Scene radiance (DR: {hdr_dr:.2f})')
 
-    # 두 LDR 이미지 히스토그램 추가 (비슷한 동적 범위 표시)
+    # Add two LDR histogram on HDR histogram
     plt.hist(image_np_ldr1.ravel(), bins=128, color='blue', alpha=0.5, label=f'Cap1 (DR: {ldr_dr1:.2f})')
     plt.hist(image_np_ldr2.ravel(), bins=128, color='red', alpha=0.5, label=f'Cap2 (DR: {ldr_dr2:.2f})')
 
-    # 로그 스케일로 Y축 설정
+    # Set-axis
     plt.yscale('log')
     plt.xlabel('Scaled pixel intensity')
     plt.ylabel('Frequency')
     plt.legend(fontsize=15)
 
-    # 이미지로 변환하여 TensorBoard에 기록
+    # Tensorboard logging
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}/Dynamic Range', image_buf, step, dataformats='HWC')
     plt.close()
@@ -506,7 +545,6 @@ def visualize_tensor_with_DR_single(writer, step, tag, hdr, ldr1):
 
     # plt.subplots_adjust(wspace=0.2, hspace=0.2)
 
-    # 이미지로 변환하여 TensorBoard에 기록
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}/Dynamic Range', image_buf, step, dataformats='HWC')
     plt.close()
@@ -542,120 +580,56 @@ def visualize_tensor_with_DR_save(writer, step, tag, hdr, ldr1, ldr2, save_dir='
 
 
 def visualize_tensor_with_DR_save(writer, step, tag, hdr, ldr1, ldr2, save_dir='test_results_real_lidar'):
-    # HDR, LDR1, LDR2 이미지를 numpy 형식으로 변환
+    
     image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
     image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
     image_np_ldr2 = ldr2.squeeze(0).permute(1,2,0).cpu().numpy()
     
-    # 히스토그램 그리기
+    # Histogram
     plt.figure(figsize=(18, 6))
     plt.title('Dynamic Range Visualization (Log2 Scale)')
-    plt.hist(image_np_hdr.ravel() + 1e-6, bins=128, color='orange', alpha=0.75, label='Scene radiance')  # 작은 값 추가
-    plt.hist(image_np_ldr1.ravel() + 1e-6, bins=128, color='green', alpha=0.75, label='Captured intensity1')  # 작은 값 추가
-    plt.hist(image_np_ldr2.ravel() + 1e-6, bins=128, color='blue', alpha=0.75, label='Captured intensity2')  # 작은 값 추가
+    plt.hist(image_np_hdr.ravel() + 1e-6, bins=128, color='orange', alpha=0.75, label='Scene radiance') 
+    plt.hist(image_np_ldr1.ravel() + 1e-6, bins=128, color='green', alpha=0.75, label='Captured intensity1') 
+    plt.hist(image_np_ldr2.ravel() + 1e-6, bins=128, color='blue', alpha=0.75, label='Captured intensity2') 
     plt.yscale('log')
     plt.xscale(scale.LogScale(plt.gca(), base=2))  # x축을 log2 스케일로 설정
     plt.xlabel('Scaled pixel intensity (log2 scale)')
     plt.ylabel('Frequency (log scale)')
     plt.legend(fontsize=20)
 
-    # TensorBoard에 이미지로 기록
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}_Dynamic Range', image_buf, step, dataformats='HWC')
 
-    # 히스토그램을 디렉토리에 저장
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     plt.savefig(os.path.join(save_dir, f'{tag}_dynamic_range_step_{step}.svg'), format='svg')
 
     plt.close()
+    
 def visualize_tensor_with_DR_single_save(writer, step, tag, hdr, ldr1, save_dir='test_results_real_lidar'):
-    # HDR, LDR1 이미지를 numpy 형식으로 변환
+
     image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
     image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
 
     plt.figure(figsize=(18, 6))
     plt.title('Dynamic Range Visualization (Log2 Scale)')
-    plt.hist(image_np_hdr.ravel() + 1e-6, bins=128, color='orange', alpha=0.75, label='Scene radiance')  # 작은 값 추가
-    plt.hist(image_np_ldr1.ravel() + 1e-6, bins=128, color='green', alpha=0.75, label='Captured intensity')  # 작은 값 추가
+    plt.hist(image_np_hdr.ravel() + 1e-6, bins=128, color='orange', alpha=0.75, label='Scene radiance')  
+    plt.hist(image_np_ldr1.ravel() + 1e-6, bins=128, color='green', alpha=0.75, label='Captured intensity')  
     plt.yscale('log')
-    plt.xscale(scale.LogScale(plt.gca(), base=2))  # x축을 log2 스케일로 설정
+    plt.xscale(scale.LogScale(plt.gca(), base=2))  
     plt.xlabel('Scaled pixel intensity (log2 scale)')
     plt.ylabel('Frequency (log scale)')
     plt.legend(fontsize=20)
 
-    # TensorBoard에 이미지로 기록
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}_Dynamic Range', image_buf, step, dataformats='HWC')
 
-    # 히스토그램을 디렉토리에 저장
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     plt.savefig(os.path.join(save_dir, f'{tag}_dynamic_range_step_{step}.svg'), format='svg')
 
     plt.close()
     
-
-# def visualize_tensor_with_DR_clamping(writer, step, hdr, ldr1, ldr2):
-#     image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
-#     image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
-#     image_np_ldr2 = ldr2.squeeze(0).permute(1,2,0).cpu().numpy()
-    
-#     plt.figure(figsize=(18, 6))
-#     plt.title('Dynamic Range Visualization')
-    
-#     # 기본 히스토그램
-#     plt.hist(image_np_hdr.ravel(), bins=256, color='orange', alpha=0.5, label='HDR')
-#     plt.hist(image_np_ldr1.ravel(), bins=256, color='green', alpha=0.5, label='LDR1')
-#     plt.hist(image_np_ldr2.ravel(), bins=256, color='blue', alpha=0.5, label='LDR2')
-
-#     # 클램핑된 영역 히스토그램 추가
-#     ldr1_clamped = image_np_ldr1[(image_np_ldr1 == image_np_ldr1.min()) | (image_np_ldr1 == image_np_ldr1.max())]
-#     ldr2_clamped = image_np_ldr2[(image_np_ldr2 == image_np_ldr2.min()) | (image_np_ldr2 == image_np_ldr2.max())]
-    
-#     # 클램핑된 픽셀은 별도로 표시
-#     if len(ldr1_clamped) > 0:
-#         plt.hist(ldr1_clamped, bins=[ldr1_clamped.min(), ldr1_clamped.max()], color='darkgreen', alpha=0.9, label='LDR1 Clamping')
-#     if len(ldr2_clamped) > 0:
-#         plt.hist(ldr2_clamped, bins=[ldr2_clamped.min(), ldr2_clamped.max()], color='darkblue', alpha=0.9, label='LDR2 Clamping')
-
-#     plt.yscale('log')
-#     plt.xlabel('Scaled pixel intensity')
-#     plt.ylabel('Frequency')
-#     plt.legend(fontsize=15)
-
-#     # 이미지로 변환하여 TensorBoard에 기록
-#     image_buf = plot_to_image(plt.gcf())
-#     writer.add_image('HDR_LDR_Comparison', image_buf, step, dataformats='HWC')
-#     plt.close()
-
-# def visualize_tensor_with_DR_save(writer, step, hdr, ldr1, ldr2, num_cnt):
-#     image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
-#     image_np_ldr1 = ldr1.squeeze(0).permute(1,2,0).cpu().numpy()
-#     image_np_ldr2 = ldr2.squeeze(0).permute(1,2,0).cpu().numpy()
-    
-#     hdr_dr = image_np_hdr.max()
-#     ldr_dr1 = image_np_ldr1.max()/image_np_ldr1.min()
-#     ldr_dr2 = image_np_ldr2.max()/image_np_ldr2.min()
-
-#     plt.figure(figsize=(18, 6))
-
-#     plt.title('Dynamic Range Visualization')
-#     plt.hist(image_np_hdr.ravel(), bins=256, color='orange', alpha=0.75, label='HDR')
-#     plt.hist(image_np_ldr1.ravel(), bins=256, color='green', alpha=0.75, label='LDR1')
-#     plt.hist(image_np_ldr2.ravel(), bins=256, color='blue', alpha=0.75, label='LDR2')
-#     plt.yscale('log')
-#     plt.xlabel('Pixel Intensity (log scale)')
-#     plt.ylabel('Frequency')
-#     plt.legend()
-#     plt.savefig(f'test/sample/dynamic_range/{num_cnt}.png')
-
-#     # plt.subplots_adjust(wspace=0.2, hspace=0.2)
-
-#     # 이미지로 변환하여 TensorBoard에 기록
-#     image_buf = plot_to_image(plt.gcf())
-#     writer.add_image('HDR_LDR_Comparison', image_buf, step, dataformats='HWC')
-#     plt.close()
     
 def visualize_hdr_dr(writer, step, hdr):
     image_np_hdr = hdr.squeeze(0).permute(1,2,0).cpu().numpy()
@@ -689,7 +663,7 @@ def log_feature_map(writer, feature_map, tag, step):
     
 
 def log_multiple_feature_map(writer, feature_map, tag, step, num_channels=4):
-    # 첫 번째 배치에서 num_channels개의 채널 선택
+    # Select feature map channel
     first_sample = feature_map[0, :num_channels]
 
     first_sample = first_sample.unsqueeze(1)  # [C, 1, H, W]
@@ -704,77 +678,70 @@ def log_multiple_feature_map(writer, feature_map, tag, step, num_channels=4):
 
 def visualize_flow(writer, flow, tag, step):
     flow_rgb = flow_utils.flow_to_rgb(flow)
-    print(f"Shape of flow : {flow_rgb.shape}")
+    # print(f"Shape of flow : {flow_rgb.shape}")
     
     writer.add_image(tag, flow_rgb[0], global_step = step)
     
 def visualize_flow_colorbar(writer, flow, tag, step):
-    # Flow 크기 계산
+    # Flow magnitude
     flow_magnitude = torch.sqrt(flow[0, 0]**2 + flow[0, 1]**2).cpu().numpy()
 
-    # flow를 RGB로 변환 (2채널 flow를 3채널 RGB로 매핑)
-    flow_rgb = flow_utils.flow_to_rgb(flow)  # 이 함수는 이미 flow 방향에 따라 색상을 변환
+    # flow to RGB mapping
+    flow_rgb = flow_utils.flow_to_rgb(flow) 
     flow_rgb_np = flow_rgb[0].cpu().numpy().transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
 
-    # 시각화 설정
+
     fig, ax = plt.subplots(figsize=(8, 6))
     im = ax.imshow(flow_rgb_np)
-    ax.axis('off')  # 축 숨기기
+    ax.axis('off') 
 
-    # 컬러 바 추가: flow 강도에 대한 범위 표시
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
     norm = Normalize(vmin=flow_magnitude.min(), vmax=flow_magnitude.max())
     
-    # flow 크기 범위를 컬러 바와 맞추기 위해 동일한 컬러 맵 적용
     colorbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='hsv'), cax=cax, orientation="vertical")
     colorbar.set_label("Flow Magnitude", rotation=270, labelpad=15)
-
-    # TensorBoard에 시각화된 이미지 추가
+    
     writer.add_figure(tag, fig, global_step=step)
     plt.close(fig)
     
 def visualize_flow_with_sphere(writer, flow, tag, step):
-    # Flow를 RGB로 변환
-    flow_rgb = flow_utils.flow_to_rgb(flow)  # Flow 데이터를 RGB로 변환
+
+    flow_rgb = flow_utils.flow_to_rgb(flow)  
     flow_rgb_np = flow_rgb[0].cpu().numpy().transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
 
-    # Flow 크기와 방향 계산
+    # Set magnitude and angle
     flow_magnitude = torch.sqrt(flow[0, 0]**2 + flow[0, 1]**2).cpu().numpy()
     flow_angle = torch.atan2(flow[0, 1], flow[0, 0]).cpu().numpy()
 
-    # 시각화 설정
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
 
-    # Optical Flow Map 시각화
+    # Visualize optical flow
     im = ax1.imshow(flow_rgb_np)
     ax1.axis('off')
     ax1.set_title("Optical Flow Map")
 
-    # Optical Flow Color Sphere 생성
-    sphere_size = 200  # Sphere 해상도 설정
+    sphere_size = 200  
     y, x = np.meshgrid(np.linspace(-1, 1, sphere_size), np.linspace(-1, 1, sphere_size))
-    mask = x**2 + y**2 <= 1  # 원형 마스크 생성
+    mask = x**2 + y**2 <= 1 
+    angle = np.arctan2(y, x)  
+    magnitude = np.sqrt(x**2 + y**2)  
+    
 
-    angle = np.arctan2(y, x)  # 방향
-    magnitude = np.sqrt(x**2 + y**2)  # 크기
+    hsv_sphere = np.ones((sphere_size, sphere_size, 3))  
+    hsv_sphere[..., 0] = (angle + np.pi) / (2 * np.pi)  
+    hsv_sphere[..., 1] = 1.0 
+    hsv_sphere[..., 2] = np.clip(magnitude, 0, 1)  
 
-    # HSV를 사용하여 색상 지정 (hue: 방향, value: 크기)
-    hsv_sphere = np.ones((sphere_size, sphere_size, 3))  # 배경을 흰색으로 설정
-    hsv_sphere[..., 0] = (angle + np.pi) / (2 * np.pi)  # hue: 방향
-    hsv_sphere[..., 1] = 1.0  # 채도
-    hsv_sphere[..., 2] = np.clip(magnitude, 0, 1)  # 밝기: 크기
-
-    # HSV -> RGB로 변환
+    # HSV -> RGB
     rgb_sphere = hsv_to_rgb(hsv_sphere)
-    rgb_sphere[~mask] = 1  # 원형 외부를 흰색으로 설정
+    rgb_sphere[~mask] = 1  
 
-    # 원형 컬러 스피어 시각화
     ax2.imshow(rgb_sphere)
     ax2.axis('off')
     # ax2.set_title("Optical Flow Color Sphere")
 
-    # 방향 및 강도 레이블 추가
+
     ax2.text(sphere_size // 2, -10, 'Right', ha='center', va='center')
     ax2.text(sphere_size // 2, sphere_size + 10, 'Left', ha='center', va='center')
     ax2.text(-10, sphere_size // 2, 'Up', ha='center', va='center', rotation=90)
@@ -782,7 +749,6 @@ def visualize_flow_with_sphere(writer, flow, tag, step):
     # ax2.text(sphere_size // 2, sphere_size // 2, 'Low Magnitude', ha='center', va='center', color='black')
     # ax2.text(sphere_size // 2, sphere_size // 2 + 70, 'High Magnitude', ha='center', va='center', color='black')
 
-    # TensorBoard에 시각화된 이미지 추가
     writer.add_figure(tag, fig, global_step=step)
     plt.close(fig)
 
@@ -885,32 +851,7 @@ def log_multiple_feature_map(writer, feature_map, tag, step, num_channels=4):
     
     writer.add_image(tag, grid, global_step=step)
     
-# def log_multiple_feature_map_with_colorbar(writer, feature_map, tag, step, num_channels=4):
 
-#     first_sample = feature_map[0, :num_channels].detach().cpu().numpy()  # [C, H, W]
-
-#     for idx in range(num_channels):
-#         channel_map = first_sample[idx]  # [H, W]
-
-
-#         fig, ax = plt.subplots(figsize=(6, 6))
-
-#         cax = ax.imshow(channel_map, cmap='viridis')
-        
-#         fig.colorbar(cax)
-
-#         ax.axis('off')
-
-#         buf = BytesIO()
-#         plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
-#         plt.close(fig)
-#         buf.seek(0)
-
-#         image = Image.open(buf)
-#         image = transforms.ToTensor()(image)
-
-#         writer.add_image(f'{tag}/channel_{idx}', image, global_step=step)
-        
 def log_multiple_feature_map_with_colorbar(writer, feature_map, tag, step, num_channels=4):
 
     first_sample = feature_map[0, :num_channels].detach().cpu().numpy()  # [C, H, W]
@@ -958,81 +899,32 @@ def log_average_feature_map(writer, feature_map1, feature_map2, tag, step, num_c
     
     writer.add_image(tag, grid, global_step=step)
 
-
-# def plot_histogram(image_tensor, title="Histogram"):
-#     # 이미지를 numpy로 변환
-#     image_np = image_tensor.cpu().numpy()
-#     image_np = (image_np*255).astype(np.uint8)
-    
-#     # 히스토그램 그리기
-#     plt.figure()
-#     plt.hist(image_np.ravel(), bins=256, range=(0, 255), fc='k', ec='k')
-#     plt.title(title)
-    
-#     # 그래프를 이미지로 변환
-#     buf = BytesIO()
-#     plt.savefig(buf, format='png')
-#     buf.seek(0)
-#     img = Image.open(buf)
-#     img = np.array(img)
-
-#     # plt 창 닫기
-#     plt.close()
-
-#     return torch.tensor(img).permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
+def log_edge_weight_to_tensorboard(writer, edge_weight, step):
+    edge_weight_vis = edge_weight[0, 0].detach().cpu().numpy() 
+    edge_weight_vis = (edge_weight_vis - edge_weight_vis.min()) / (edge_weight_vis.max() - edge_weight_vis.min())  # Normalize
+    writer.add_image('Edge_Weight', torch.tensor(edge_weight_vis).unsqueeze(0), step, dataformats='CHW')
 
 def plot_histogram(image_tensor, title="Histogram"):
-    # 이미지를 numpy로 변환
     image_np = image_tensor.cpu().numpy()
     image_np = (image_np * 255).astype(np.uint8)
     
-    # 히스토그램 그리기
-    plt.figure(figsize=(10, 6), dpi=150)  # 해상도 조절을 위한 figsize와 dpi 설정
+    # Histogram
+    plt.figure(figsize=(10, 6), dpi=150)  
     plt.hist(image_np.ravel(), bins=256, range=(0, 255), fc='green', ec='green')
-    plt.yscale('log', base=10)  # y축을 밑 10 로그로 설정
+    plt.yscale('log', base=10)
     plt.title(title)
     plt.xlabel("Pixel Intensity")
     plt.ylabel("Frequency (log scale, base 10)")
-    
-    # 그래프를 이미지로 변환
+
     buf = BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
     img = Image.open(buf)
     img = np.array(img)
-
-    # plt 창 닫기
     plt.close()
 
     return torch.tensor(img).permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
 
-
-# def plot_lidar_points(points, image_left, vmax=20000):
-#     """
-#     Project LiDAR points onto the image and return the plotted figure.
-
-#     Args:
-#         points (np.ndarray): LiDAR 3D points to be projected
-#         image_left (np.ndarray): Left camera image for overlay
-#         focal_length (float): Camera's focal length
-#         cx, cy (float): Principal point coordinates
-#         image_width, image_height (float): Dimensions of the image for clipping
-#         vmax (int): Maximum depth for color scaling
-#     Returns:
-#         fig (matplotlib.figure.Figure): The figure containing the plot
-        
-#     """
-#     points = points.cpu().numpy()
-#     image_left = image_left.cpu().numpy().transpose(1,2,0)
-    
-#     plt.imshow(np.zeros((image_left.shape[1], image_left.shape[0])), cmap='gray') 
-#     plt.scatter(points[:, 0], points[:, 1], s=0.5, c=points[:, 2], cmap='magma', vmax=vmax)
-#     plt.colorbar(label="Depth (mm)")
-#     plt.title("Projected LiDAR Points")
-    
-#     # 이미지로 반환
-#     fig = plt.gcf()
-#     return fig
 
 def plot_lidar_points(points, image_left, vmax=20000):
     """
@@ -1067,8 +959,94 @@ def plot_lidar_points(points, image_left, vmax=20000):
     
     return fig
 
-import matplotlib.pyplot as plt
-import numpy as np
+def plot_lidar_points_disp(points, image_left, focal_length, baseline, vmax=30):
+    """
+    Project LiDAR points onto the image and visualize using disparity values.
+
+    Args:
+        points (torch.Tensor): LiDAR 3D points (N, 3)
+        image_left (torch.Tensor): Left image (C, H, W)
+        focal_length (float or torch.Tensor): Camera focal length
+        baseline (float or torch.Tensor): Stereo baseline
+        vmax (float): Maximum disparity value for color scaling
+
+    Returns:
+        fig (matplotlib.figure.Figure): Visualization figure
+    """
+    # Tensor to numpy
+    points = points.cpu().numpy()
+    image_left = image_left.cpu().numpy().transpose(1, 2, 0)  # (H, W, C)
+
+    # Focal & baseline to float
+    if isinstance(focal_length, torch.Tensor):
+        focal_length = focal_length.item()
+    if isinstance(baseline, torch.Tensor):
+        baseline = baseline.item()
+
+    # Compute disparity: disparity = (f * B) / Z
+    disparities = (focal_length * baseline) / (points[:, 2] + 1e-6)  # Avoid divide by zero
+
+    # Clip x/y for visualization
+    points[:, 0] = np.clip(points[:, 0], 0, image_left.shape[1] - 1)
+    points[:, 1] = np.clip(points[:, 1], 0, image_left.shape[0] - 1)
+
+    # Plotting
+    fig, ax = plt.subplots(1, 2, figsize=(14, 5))
+    ax[0].imshow(image_left)
+    ax[0].set_title("Left Rectified Image")
+
+    ax[1].imshow(np.zeros((image_left.shape[0], image_left.shape[1])), cmap='gray')
+    scatter = ax[1].scatter(points[:, 0], points[:, 1], s=0.5, c=disparities, cmap='magma', vmin=0, vmax=vmax)
+    fig.colorbar(scatter, ax=ax[1], label="Disparity (pixels)")
+    ax[1].set_title("Projected LiDAR Points (Disparity View)")
+
+    return fig
+
+
+def plot_lidar_points_disp_only(points, image_shape, focal_length, baseline, vmax=30):
+    """
+    Visualize LiDAR points using disparity color map only (no axis, title, colorbar).
+
+    Args:
+        points (torch.Tensor): LiDAR 3D points (N, 3)
+        image_shape (tuple): Image shape as (C, H, W) or (H, W)
+        focal_length (float or torch.Tensor): Focal length
+        baseline (float or torch.Tensor): Stereo baseline
+        vmax (float): Max disparity value for color scale
+
+    Returns:
+        fig (matplotlib.figure.Figure): The figure with the visualization
+    """
+    # Convert to numpy
+    points = points.cpu().numpy()
+    if isinstance(focal_length, torch.Tensor):
+        focal_length = focal_length.item()
+    if isinstance(baseline, torch.Tensor):
+        baseline = baseline.item()
+
+    # Image shape 
+    if len(image_shape) == 3:
+        H, W = image_shape[1], image_shape[2]
+    else:
+        H, W = image_shape
+
+    # disparity 
+    disparities = (focal_length * baseline) / (points[:, 2] + 1e-6)
+
+    # Clipping
+    points[:, 0] = np.clip(points[:, 0], 0, W - 1)
+    points[:, 1] = np.clip(points[:, 1], 0, H - 1)
+
+    # Visualize
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.imshow(np.zeros((H, W)), cmap='gray') 
+    ax.scatter(points[:, 0], points[:, 1], s=0.5, c=disparities, cmap='magma', vmin=0, vmax=vmax)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.axis('off')
+
+    return fig
 
 def visualize_tensor_3mg_with_DR(writer, step, tag, save_dir, image_tensor_hdr, image_tensor_ldr1, image_tensor_ldr2):
     # Convert tensors to numpy arrays
@@ -1165,7 +1143,7 @@ def visualize_tensor_3mg_with_DR(writer, step, tag, save_dir, image_tensor_hdr, 
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}/Dynamic Range', image_buf, step, dataformats='HWC')
     
-    # 히스토그램을 디렉토리에 저장
+    # Save to histgoram_directory
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     plt.savefig(os.path.join(save_dir, f'{tag}_dynamic_range_step_{step}.svg'), format='svg')
@@ -1248,7 +1226,6 @@ def visualize_tensor_2mg_with_DR(writer, step, tag, save_dir, image_tensor_hdr, 
     image_buf = plot_to_image(plt.gcf())
     writer.add_image(f'{tag}/Dynamic Range', image_buf, step, dataformats='HWC')
     
-    # 히스토그램을 디렉토리에 저장
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     plt.savefig(os.path.join(save_dir, f'{tag}_dynamic_range_step_{step}.svg'), format='svg')
@@ -1259,27 +1236,25 @@ def visualize_tensor_2mg_with_DR(writer, step, tag, save_dir, image_tensor_hdr, 
 
 
 def visualize_error_map(error_map, vmin=0, vmax=5, title='Error Map'):
-    # error_map을 numpy로 변환
     error_map_np = error_map[0].cpu().numpy().squeeze()
     
-    # vmin, vmax 자동 설정이 필요한 경우
+    # vmin, vmax 
     if vmax is None or vmax <= vmin:
         vmax = error_map_np.max()
         vmin = error_map_np.min()
 
-    # 대비 높이기 위해 vmin, vmax를 특정 범위로 설정
-    if vmax - vmin < 0.1:  # 오차 범위가 너무 작을 경우 대비를 강제로 높임
+
+    if vmax - vmin < 0.1:  
         vmin, vmax = 0, 1
 
-    # 시각화 설정
     dpi = 200
     fig, ax = plt.subplots(figsize=(6, 3), dpi=dpi)
-    cmap = plt.cm.plasma  # error map 전용 컬러맵 설정
+    cmap = plt.cm.plasma  
     im = ax.imshow(error_map_np, cmap=cmap, vmin=vmin, vmax=vmax)
     ax.axis('off')
     ax.set_title(title)
 
-    # 컬러바 추가
+
     divider = make_axes_locatable(ax)
     cax = divider.append_axes('right', size='5%', pad=0.05)
     cbar = fig.colorbar(im, cax=cax)
@@ -1288,13 +1263,13 @@ def visualize_error_map(error_map, vmin=0, vmax=5, title='Error Map'):
     plt.tight_layout(pad=0)
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-    # 이미지 버퍼에 저장
+
     buf = BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0, dpi=dpi)
     plt.close(fig)
     buf.seek(0)
 
-    # PIL 이미지로 변환 후 numpy 배열로 변환
+
     image_pil = Image.open(buf)
     image_array = np.array(image_pil)
     image_array = np.transpose(image_array, (2, 0, 1))
@@ -1380,62 +1355,6 @@ def visualize_1img_with_DR(image_tensor_hdr, image_tensor_ldr, target_dynamic_ra
     }
     return coverage_info
 
-# def visualize_2img_with_DR(image_tensor_hdr, image_tensor_ldr1, image_tensor_ldr2, target_dynamic_range=48, save_path='histogram_dual_ldr.svg', y_max=None):
-#     # Convert tensors to numpy arrays
-#     image_np_hdr = image_tensor_hdr.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
-#     image_np_ldr1 = image_tensor_ldr1.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
-#     image_np_ldr2 = image_tensor_ldr2.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
-
-#     # HDR Dynamic Range
-#     hdr_max = image_np_hdr.max()
-#     hdr_min = image_np_hdr[image_np_hdr > 0].min()
-#     hdr_dr = 20 * np.log10(hdr_max / hdr_min)
-    
-#     # LDR dynamic ranges and scaling for DR calculation
-#     ldr_max1, ldr_min1 = image_np_ldr1.max(), image_np_ldr1[image_np_ldr1 > 0].min()
-#     ldr_dr1 = 20 * np.log10(ldr_max1 / ldr_min1)
-#     scale_factor1 = target_dynamic_range / ldr_dr1
-#     adjusted_ldr_dr1 = ldr_dr1 * scale_factor1
-#     increase_percent_ldr1 = ((adjusted_ldr_dr1 - target_dynamic_range) / target_dynamic_range) * 100
-
-#     ldr_max2, ldr_min2 = image_np_ldr2.max(), image_np_ldr2[image_np_ldr2 > 0].min()
-#     ldr_dr2 = 20 * np.log10(ldr_max2 / ldr_min2)
-#     scale_factor2 = target_dynamic_range / ldr_dr2
-#     adjusted_ldr_dr2 = ldr_dr2 * scale_factor2
-#     increase_percent_ldr2 = ((adjusted_ldr_dr2 - target_dynamic_range) / target_dynamic_range) * 100
-
-#     combined_min = min(ldr_min1, ldr_min2)
-#     combined_max = max(ldr_max1, ldr_max2)
-#     combined_dr = 20 * np.log10(combined_max / combined_min)
-#     adjusted_combined_dr = combined_dr * min(scale_factor1, scale_factor2)
-#     increase_percent_combined = ((adjusted_combined_dr - target_dynamic_range) / target_dynamic_range) * 100
-
-#     # Visualization for dynamic range coverage
-#     bins = np.logspace(np.log10(hdr_min), np.log10(hdr_max), 300)
-#     plt.figure(figsize=(10, 6))
-
-#     plt.hist(image_np_hdr.ravel(), bins=bins, color='orange', alpha=1.0, histtype='stepfilled')
-#     plt.hist(image_np_ldr1.ravel(), bins=bins, color='red', alpha=0.9,  histtype='stepfilled')
-#     plt.hist(image_np_ldr2.ravel(), bins=bins, color='blue', alpha=0.9,  histtype='stepfilled')
-    
-#     plt.xscale('log')
-#     plt.yscale('log')
-#     plt.xlabel('Pixel Intensity (Log Scale)', fontsize=18)
-#     plt.ylabel('Frequency (Log Scale)', fontsize=18)
-#     plt.tick_params(axis='both', which='major', labelsize=18)
-#     # plt.legend(fontsize=12)
-
-#     if y_max is not None:
-#         plt.ylim(top=y_max)
-
-#     plt.savefig(save_path, format='svg')
-#     plt.close()
-
-#     coverage_info = {
-#         'Combined_coverage': adjusted_combined_dr,
-#         'Combined_increase_percent': increase_percent_combined
-#     }
-#     return coverage_info
 
 def visualize_2img_with_DR(image_tensor_hdr, image_tensor_ldr1, image_tensor_ldr2, target_dynamic_range=48, save_path='histogram_dual_ldr.svg', y_max=None):
     # Convert tensors to numpy arrays
@@ -1516,9 +1435,6 @@ def visualize_2img_with_DR(image_tensor_hdr, image_tensor_ldr1, image_tensor_ldr
     print(f"LDR1 Min: {ldr_min1}, LDR1 Max: {ldr_max1}")
     print(f"LDR2 Min: {ldr_min2}, LDR2 Max: {ldr_max2}")
 
-
-
-
     # Visualization for dynamic range coverage
     # bins = np.logspace(np.log10(hdr_min), np.log10(hdr_max), 300)
     bins = np.logspace(np.log10(max(hdr_min, 1e-5)), np.log10(hdr_max), 300)
@@ -1550,73 +1466,3 @@ def visualize_2img_with_DR(image_tensor_hdr, image_tensor_ldr1, image_tensor_ldr
         'Higher_bound_coverage': adjusted_higher_dr
     }
     return coverage_info
-
-# def visualize_2img_with_DR(image_tensor_hdr, image_tensor_ldr1, image_tensor_ldr2, target_dynamic_range=48, save_path='histogram_dual_ldr.svg', y_max=None):
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-
-#     # Convert tensors to numpy arrays
-#     image_np_hdr = image_tensor_hdr.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
-#     image_np_ldr1 = image_tensor_ldr1.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
-#     image_np_ldr2 = image_tensor_ldr2.squeeze(0).permute(1, 2, 0).detach().cpu().numpy()
-
-#     # HDR Dynamic Range
-#     hdr_max = image_np_hdr.max()
-#     hdr_min = image_np_hdr[image_np_hdr > 0].min()
-
-#     # Clip LDR images to valid range
-#     image_np_ldr1 = np.clip(image_np_ldr1, 1e-5, None)
-#     image_np_ldr2 = np.clip(image_np_ldr2, 1e-5, None)
-
-#     # Calculate dynamic ranges for LDR images
-#     ldr_min1 = image_np_ldr1[image_np_ldr1 > 0].min()
-#     ldr_min2 = image_np_ldr2[image_np_ldr2 > 0].min()
-#     ldr_max1, ldr_max2 = image_np_ldr1.max(), image_np_ldr2.max()
-
-#     # Determine Lower and Higher Bound images
-#     if ldr_min1 > ldr_min2:
-#         lower_bound_img, higher_bound_img = image_np_ldr2, image_np_ldr1
-#         lower_bound_color, higher_bound_color = 'blue', 'red'
-#     else:
-#         lower_bound_img, higher_bound_img = image_np_ldr1, image_np_ldr2
-#         lower_bound_color, higher_bound_color = 'blue', 'red'
-
-#     # 시각화를 위해 두 히스토그램의 Max 값을 동적으로 조정
-#     ldr_max_combined = max(ldr_max1, ldr_max2)  # 최대값의 기준을 동일하게
-#     lower_bound_img = lower_bound_img / ldr_max1 * ldr_max_combined
-#     higher_bound_img = higher_bound_img / ldr_max2 * ldr_max_combined
-
-#     # Calculate dynamic range
-#     lower_dr = 20 * np.log10(ldr_max1 / ldr_min1)
-#     higher_dr = 20 * np.log10(ldr_max2 / ldr_min2)
-
-#     # Scaling for visualization
-#     common_scale_factor = target_dynamic_range / max(lower_dr, higher_dr)
-#     adjusted_lower_dr = lower_dr * common_scale_factor
-#     adjusted_higher_dr = higher_dr * common_scale_factor
-
-#     # Visualization
-#     bins = np.logspace(np.log10(max(hdr_min, 1e-5)), np.log10(hdr_max), 300)
-#     plt.figure(figsize=(10, 6))
-#     plt.hist(image_np_hdr.ravel(), bins=bins, color='orange', alpha=1.0, histtype='stepfilled', label='HDR')
-#     plt.hist(lower_bound_img.ravel(), bins=bins, color=lower_bound_color, alpha=0.6, histtype='stepfilled', label='Lower Bound LDR')
-#     plt.hist(higher_bound_img.ravel(), bins=bins, color=higher_bound_color, alpha=0.6, histtype='stepfilled', label='Higher Bound LDR')
-#     plt.xscale('log')
-#     plt.yscale('log')
-#     plt.xlabel('Pixel Intensity (Log Scale)', fontsize=18)
-#     plt.ylabel('Frequency (Log Scale)', fontsize=18)
-#     plt.tick_params(axis='both', which='major', labelsize=18)
-#     if y_max is not None:
-#         plt.ylim(top=y_max)
-#     plt.legend(fontsize=12)
-#     plt.savefig(save_path, format='svg')
-#     plt.close()
-
-#     # Log the results
-#     print(f"Lower Bound Dynamic Range (Adjusted): {adjusted_lower_dr}")
-#     print(f"Higher Bound Dynamic Range (Adjusted): {adjusted_higher_dr}")
-
-#     return {
-#         'Lower_bound_coverage': adjusted_lower_dr,
-#         'Higher_bound_coverage': adjusted_higher_dr
-#     }

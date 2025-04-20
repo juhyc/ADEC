@@ -64,17 +64,18 @@ class CombineModel_w_nae(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-
-        self.nae = NeuralExposureControl()
-        self.raft_stereo = RAFTStereo(args)
+        self.device = args.device
+        
+        self.nae = NeuralExposureControl().to(self.device)
+        self.raft_stereo = RAFTStereo(args).to(self.device)
         
     
     def forward(self, left_hdr, right_hdr, initial_exp, iters=32):
         
         #* 1. Capture Simulation
         #^ Capture simulator module
-        phi_l_exph = ImageFormation(left_hdr, initial_exp, device=DEVICE)
-        phi_r_exph = ImageFormation(right_hdr, initial_exp, device=DEVICE)
+        phi_l_exph = ImageFormation(left_hdr, initial_exp, device=self.device)
+        phi_r_exph = ImageFormation(right_hdr, initial_exp, device=self.device)
 
         
         #^ Simulated LDR image pair      
@@ -90,8 +91,8 @@ class CombineModel_w_nae(nn.Module):
 
         #* 3. Simulate with shifted exposure 
         #^ Simulate capured LDR image with shifted exposure
-        phi_hat_l_exph = ImageFormation(left_hdr, alpha, device=DEVICE)
-        phi_hat_r_exph = ImageFormation(right_hdr, alpha, device=DEVICE)
+        phi_hat_l_exph = ImageFormation(left_hdr, alpha, device=self.device)
+        phi_hat_r_exph = ImageFormation(right_hdr, alpha, device=self.device)
 
         left_ldr_adj_exph = QuantizeSTE.apply(phi_hat_l_exph.noise_modeling(), 8)
         right_ldr_adj_exph = QuantizeSTE.apply(phi_hat_r_exph.noise_modeling(), 8)

@@ -85,7 +85,7 @@ def rgb_to_grayscale(image_tensor):
     return grayscale
 
 
-def soft_binary_threshold_batch(image_tensor, alpha=0.02, beta=0.98):
+def soft_binary_threshold_batch(image_tensor, alpha=0.01, beta=0.99):
     """Soft-binary trapezoid function for PyTorch tensors in batch.
 
     Args:

@@ -66,17 +66,18 @@ class CombineModel_w_gradientAE(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
+        self.device = args.device
 
         self.gradient_AE = GradientExposureControl(scale=1.0, Lambda=10, delta=0.01, n_points=61, default_K_p=0.5)
-        self.raft_stereo = RAFTStereo(args)
+        self.raft_stereo = RAFTStereo(args).to(self.device)
         
     
     def forward(self, left_hdr, right_hdr, initial_exp, iters=32):
         
         #* 1. Capture Simulation
         #^ Capture simulator module
-        phi_l_exph = ImageFormation(left_hdr, initial_exp, device=DEVICE)
-        phi_r_exph = ImageFormation(right_hdr, initial_exp, device=DEVICE)
+        phi_l_exph = ImageFormation(left_hdr, initial_exp, device=self.device)
+        phi_r_exph = ImageFormation(right_hdr, initial_exp, device=self.device)
 
         
         #^ Simulated LDR image pair      
@@ -89,8 +90,8 @@ class CombineModel_w_gradientAE(nn.Module):
 
         #* 3. Simulate with shifted exposure 
         #^ Simulate capured LDR image with shifted exposure
-        phi_hat_l_exph = ImageFormation(left_hdr, exp_gradientAE, device=DEVICE)
-        phi_hat_r_exph = ImageFormation(right_hdr, exp_gradientAE, device=DEVICE)
+        phi_hat_l_exph = ImageFormation(left_hdr, exp_gradientAE, device=self.device)
+        phi_hat_r_exph = ImageFormation(right_hdr, exp_gradientAE, device=self.device)
 
         left_ldr_adj_exph = QuantizeSTE.apply(phi_hat_l_exph.noise_modeling(), 8)
         right_ldr_adj_exph = QuantizeSTE.apply(phi_hat_r_exph.noise_modeling(), 8)

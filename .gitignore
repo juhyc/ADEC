@@ -15,15 +15,4 @@ test_results_real/
 test/
 utilities/
 ACVNet/
-review_comparison_finetuned_model/
-review_comparison_no_finetuned_model/
-review_comparison_raft_finetuned_model/
-review_comparison_single_dual/
-test_results/
-test_results_carla_ablation/
-test_results_carla_fusion_ablation_exp23/
-test_results_carla_fusion_ablation_exp1535/
-test_results_carla_fusion_ablation2/
-test_results_real_final/
-test_results_real_review/
-test_results_real_review_motion/
+core/test

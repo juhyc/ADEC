@@ -1463,6 +1463,50 @@ def stereo_exposure_control7(batch_exp_f1, batch_exp_f2, batch_histograms_f1, ba
     return shifted_exp_f1, shifted_exp_f2
 
 
+def stereo_exposure_control8(batch_exp_f1, batch_exp_f2, batch_histograms_f1, batch_histograms_f2, alpha1, alpha2, exp_gap_threshold=2.0):
+    device = batch_exp_f1.device  # ✅ 현재 텐서의 device 확인 (e.g., cuda:2)
+    
+    shifted_exp_f1 = torch.zeros_like(batch_exp_f1, device=device)  # ✅ GPU로 이동
+    shifted_exp_f2 = torch.zeros_like(batch_exp_f2, device=device)  # ✅ GPU로 이동
+    
+    # Skewness 
+    skewness_f1 = calculate_batch_skewness(batch_histograms_f1)
+    skewness_f2 = calculate_batch_skewness(batch_histograms_f2)
+    
+    # Check scene dynamic range
+    hdr_f1 = clamping_ratio_flag(batch_histograms_f1).to(device)  # ✅ GPU로 이동
+    hdr_f2 = clamping_ratio_flag(batch_histograms_f2).to(device)  # ✅ GPU로 이동
+    
+    clamping_ratio_f1 = clamping_ratio(batch_histograms_f1).to(device)  # ✅ GPU로 이동
+    clamping_ratio_f2 = clamping_ratio(batch_histograms_f2).to(device)  # ✅ GPU로 이동
+    
+    for i in range(batch_exp_f1.size(0)):
+        exp_f1, exp_f2 = batch_exp_f1[i].to(device), batch_exp_f2[i].to(device)  # ✅ GPU로 이동
+        a1, a2 = alpha1[i].to(device), alpha2[i].to(device)  # ✅ GPU로 이동
+        skewness_diff = abs(skewness_f1[i] - skewness_f2[i])
+        
+        new_exp_f1 = exp_f1
+        new_exp_f2 = exp_f2
+        exp_diff = torch.abs(new_exp_f1 - new_exp_f2)
+
+        if hdr_f1[i] or hdr_f2[i]:  # HDR scene, clamping이 존재하는 경우
+            if exp_diff < exp_gap_threshold:
+                new_exp_f1, new_exp_f2 = adjust_exposure_gap(exp_f1, exp_f2, 
+                                                             clamping_ratio_f1[i].to(device), 
+                                                             clamping_ratio_f2[i].to(device), 
+                                                             a1, a2)
+        else:  # LDR scene, skewness 조정
+            new_exp_f1, new_exp_f2 = handle_ldr_scene_skewness(exp_f1, exp_f2, 
+                                                               skewness_f1[i], 
+                                                               skewness_f2[i], 
+                                                               alpha=0.1)
+
+        shifted_exp_f1[i] = new_exp_f1
+        shifted_exp_f2[i] = new_exp_f2
+        
+    return shifted_exp_f1, shifted_exp_f2
+
+
 
 
 def adjust_exposure_gap_dynamic(exp_f1, exp_f2, skewness_f1, skewness_f2, skewness_diff, alpha1, alpha2, stability_threshold, max_exposure_gap, clamping_ratio_f1, clamping_ratio_f2):
@@ -1521,7 +1565,7 @@ def stereo_exposure_control_dynamic(batch_exp_f1, batch_exp_f2, batch_histograms
             print(f"LDR scene detected: Clamping ratio below threshold")
             if skewness_diff < 0.1:
                 print("Exposure gap is small, adjusting exposure to close skewness values")
-                new_exp_f1, new_exp_f2 = handle_unimodal_scene_skewness2(exp_f1, exp_f2, skewness_f1[i], skewness_f2[i], alpha=a1)  # 더 작은 알파 값 적용
+                new_exp_f1, new_exp_f2 = handle_unimodal_scene_skewness(exp_f1, exp_f2, skewness_f1[i], skewness_f2[i], alpha=a1)  # 더 작은 알파 값 적용
             else:
                 print("Exposure gap at threshold, maintaining current exposures")
                 new_exp_f1 = exp_f1

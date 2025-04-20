@@ -134,32 +134,6 @@ def generate_random_exposures(batch_size, valid_mode=False, value = 1.0):
         
     return torch.tensor(exp_list)
 
-# def generate_random_exposures(batch_size, max_exposure_gap=2.5, value=1.0):
-#     exp_list = []
-    
-#     for _ in range(batch_size):
-#         exp1 = random.uniform(2**(-value), 2**(value))
-#         # 2번째 노출값을 생성하고, 두 노출값의 차이가 2.5배 이하가 되도록 조정
-#         exp2 = random.uniform(2**(-value), 2**(value))
-#         if exp1 > exp2:
-#             ratio = exp1 / exp2
-#         else:
-#             ratio = exp2 / exp1
-        
-#         # 만약 ratio가 max_exposure_gap보다 크다면 조정
-#         if ratio > max_exposure_gap:
-#             adjustment_ratio = (ratio - max_exposure_gap) / 2
-#             if exp1 > exp2:
-#                 exp1 /= (1 + adjustment_ratio)
-#                 exp2 *= (1 + adjustment_ratio)
-#             else:
-#                 exp1 *= (1 + adjustment_ratio)
-#                 exp2 /= (1 + adjustment_ratio)
-        
-#         exp_list.append([exp1, exp2])
-    
-#     return torch.tensor(exp_list)
-
 
 # ^ Generate random exposure factor based on HDR scene dynamic range
 def generate_adjusted_random_expousres(batch_size, d_r, gap_threshold = 0.5, large_gap  = 4, small_gap = 2):
@@ -205,15 +179,95 @@ def min_max_scale(image):
     return result
 
 # ^ Image Simulation class (noise modeling, adjust dynamic range)
+# class ImageFormation:
+#     def __init__(self, image, exp, range=4.0, device = 'cuda', fixed_range_middle = None):
+#         """Initialize image formation model.
+#             Set image to phi.
+#             Calculate gain, shutter time from exposure value 'exp'.
+
+#         Args:
+#             image (Image): HDR image
+#             exp : exposure
+#         """
+#         if torch.any(exp <= 0):
+#             raise ValueError("'exp' should be a positive value.")
+        
+#         self.device = torch.device(device)
+#         self.gauss_var = float(1e-6)
+#         self.poisson_scale = float(3.4e-4)
+#         self.phi = image.clone()
+#         self.exp = exp.to(self.device)
+#         # self.exp = exp.view(-1, 1).to(device)      
+#         self.ldr_denom = image.clone()
+        
+#         self.ldr_range = range
+
+#         if fixed_range_middle is not None:
+#             self.range_middle = fixed_range_middle
+#         else:
+#             self.range_middle = torch.max(image) / 2
+            
+#         # Set range
+#         # self.ldr_range = range
+#         self.interval = self.range_middle*(self.ldr_range - 1)/(self.ldr_range + 1)
+#         self.lower_bound = self.range_middle - self.interval
+#         self.higher_bound = self.range_middle + self.interval
+        
+#         # Max shutter speed
+#         self.T_max = 5.0
+        
+#         # Camera gain and shutter speed for each image in the batch
+#         self.g = torch.max(torch.ones_like(self.exp) , self.exp/self.T_max)
+#         self.t = self.exp/self.g 
+    
+#     def noise_modeling(self):
+#         """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
+
+#         """
+#         # Validation check
+#         # if torch.any(self.phi < 0) or torch.any(self.phi > 1):
+#         #     raise ValueError("The image values should be between 0 and 1.")
+        
+#         t_expanded = self.t.view(-1, 1, 1, 1)
+#         g_expanded = self.g.view(-1, 1, 1, 1)
+#         exp_expanded = t_expanded * g_expanded
+        
+#         lower_bound = self.lower_bound/exp_expanded
+#         higher_bound = self.higher_bound/exp_expanded
+        
+#         #? Logging : dynamic upper lower bound
+#         # print(f"Lower bound : {lower_bound}, High bound : {higher_bound}")
+#         # print(f"Ratio of bound : {higher_bound/lower_bound}")
+        
+#         # raw_phi = torch.clamp(self.phi, lower_bound, higher_bound)
+        
+#         gauss_std = torch.sqrt(torch.tensor(self.gauss_var)).to(self.device) * (1/t_expanded)
+#         poisson_scale = torch.tensor(self.poisson_scale).to(self.device) * (1/t_expanded)
+    
+#         # Shot noise
+#         shot_noise = torch.poisson(self.phi/poisson_scale) * poisson_scale * g_expanded
+#         # Readout noise
+#         readout_noise = gauss_std * torch.randn_like(self.phi) * g_expanded
+#         # ADC noise
+#         adc_noise = gauss_std * torch.randn_like(self.phi)
+        
+#         noise_phi = shot_noise + readout_noise + adc_noise
+        
+#         noise_ldr = torch.clamp(noise_phi, lower_bound, higher_bound)
+#         self.ldr_denom = noise_ldr
+            
+#         normalize_ldr = (noise_ldr - noise_ldr.min())/(noise_ldr.max() - noise_ldr.min())
+#         remap_ldr2hdr = lower_bound + normalize_ldr * ( higher_bound - lower_bound)
+        
+        
+#         return normalize_ldr
+    
+
 class ImageFormation:
-    def __init__(self, image, exp, range=4.0, device = 'cuda'):
+    def __init__(self, image, exp, range=4.0, device='cuda', fixed_range_middle=None):
         """Initialize image formation model.
             Set image to phi.
             Calculate gain, shutter time from exposure value 'exp'.
-
-        Args:
-            image (Image): HDR image
-            exp : exposure
         """
         if torch.any(exp <= 0):
             raise ValueError("'exp' should be a positive value.")
@@ -221,103 +275,72 @@ class ImageFormation:
         self.device = torch.device(device)
         self.gauss_var = float(1e-6)
         self.poisson_scale = float(3.4e-4)
-        
-        self.phi = image.clone()
-        self.exp = exp.to(self.device)
-        
-        self.ldr_denom = image.clone()
+        self.phi = image.clone().to(self.device)  
+        self.exp = exp.to(self.device)  
+        self.ldr_denom = image.clone().to(self.device)  
+        self.ldr_range = range
+
+        if fixed_range_middle is not None:
+            self.range_middle = fixed_range_middle.to(self.device)  
+        else:
+            self.range_middle = torch.max(image).to(self.device) / 2  
         
         # Set range
-        self.ldr_range = range
-        self.range_middle = torch.max(image)/2
-        self.interval = self.range_middle*(self.ldr_range - 1)/(self.ldr_range + 1)
-        self.lower_bound = self.range_middle - self.interval
-        self.higher_bound = self.range_middle + self.interval
+        self.interval = self.range_middle * (self.ldr_range - 1) / (self.ldr_range + 1)
+        self.lower_bound = (self.range_middle - self.interval).to(self.device)  
+        self.higher_bound = (self.range_middle + self.interval).to(self.device)  
         
         # Max shutter speed
-        self.T_max = 5.0
-        
+        self.T_max = torch.tensor(5.0, device=self.device)  
+
         # Camera gain and shutter speed for each image in the batch
-        self.g = torch.max(torch.ones_like(self.exp) , self.exp/self.T_max)
-        self.t = self.exp/self.g 
-    
+        self.g = torch.max(torch.ones_like(self.exp).to(self.device), self.exp / self.T_max)  
+        self.t = self.exp / self.g  
+
     def noise_modeling(self):
         """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
-
         """
-        # Validation check
-        # if torch.any(self.phi < 0) or torch.any(self.phi > 1):
-        #     raise ValueError("The image values should be between 0 and 1.")
+        t_expanded = self.t.view(-1, 1, 1, 1).to(self.device)  
+        g_expanded = self.g.view(-1, 1, 1, 1).to(self.device)  
+        exp_expanded = t_expanded * g_expanded  
         
-        t_expanded = self.t.view(-1, 1, 1, 1)
-        g_expanded = self.g.view(-1, 1, 1, 1)
-        exp_expanded = t_expanded * g_expanded
+        # print(f"[DEBUG] : Before exp_expanded lower, higher bound : {self.lower_bound} {self.higher_bound}")
         
-        lower_bound = self.lower_bound/exp_expanded
-        higher_bound = self.higher_bound/exp_expanded
+        # print(f"[DEBUG] : exp, exp_expanded : {self.exp} {exp_expanded}")
+
+        lower_bound = self.lower_bound.to(self.device) / exp_expanded  
+        higher_bound = self.higher_bound.to(self.device) / exp_expanded
         
-        #? Logging : dynamic upper lower bound
-        # print(f"Lower bound : {lower_bound}, High bound : {higher_bound}")
-        # print(f"Ratio of bound : {higher_bound/lower_bound}")
+        # print(f"[DEBUG] : After exp_expanded lower, higher bound : {lower_bound} {higher_bound}")
         
-        # raw_phi = torch.clamp(self.phi, lower_bound, higher_bound)
-        
-        gauss_std = torch.sqrt(torch.tensor(self.gauss_var)).to(self.device) * (1/t_expanded)
-        poisson_scale = torch.tensor(self.poisson_scale).to(self.device) * (1/t_expanded)
+        gauss_std = torch.sqrt(torch.tensor(self.gauss_var, device=self.device)) * (1 / t_expanded)
+        poisson_scale = torch.tensor(self.poisson_scale, device=self.device) * (1 / t_expanded)
     
         # Shot noise
-        shot_noise = torch.poisson(self.phi/poisson_scale) * poisson_scale * g_expanded
+        shot_noise = torch.poisson(self.phi / poisson_scale) * poisson_scale * g_expanded
         # Readout noise
-        readout_noise = gauss_std * torch.randn_like(self.phi) * g_expanded
+        readout_noise = gauss_std * torch.randn_like(self.phi, device=self.device) * g_expanded
         # ADC noise
-        adc_noise = gauss_std * torch.randn_like(self.phi)
-        
+        adc_noise = gauss_std * torch.randn_like(self.phi, device=self.device)
+
         noise_phi = shot_noise + readout_noise + adc_noise
-        
+
+
         noise_ldr = torch.clamp(noise_phi, lower_bound, higher_bound)
-        self.ldr_denom = noise_ldr
-            
-        normalize_ldr = (noise_ldr - noise_ldr.min())/(noise_ldr.max() - noise_ldr.min())
-        remap_ldr2hdr = lower_bound + normalize_ldr * ( higher_bound - lower_bound)
         
-        
-        return normalize_ldr
-    
-    # def noise_modeling(self):
-    #     """Add pre- post- noise and adjust dynamic range to simulate LDR captured image.
+        self.ldr_denom = noise_ldr.clone().to(self.device)
+        # print(f"[DEBUG] : noise_ldr lower, higher bound : {noise_ldr.min()} {noise_ldr.max()}")
+        # print(f"[DEBUG] : self.ldr_denom lower, higher bound : {self.ldr_denom.min()} {self.ldr_denom.max()}")
 
-    #     """
-    #     # Validation check
-    #     # if torch.any(self.phi < 0) or torch.any(self.phi > 1):
-    #     #     raise ValueError("The image values should be between 0 and 1.")
-        
-    #     t_expanded = self.t.view(-1, 1, 1, 1)
-    #     g_expanded = self.g.view(-1, 1, 1, 1)
-        
-    #     phi_scaled = self.phi * t_expanded * g_expanded
-        
-    #     # noise_dark_scale = 10.0
-        
-    #     gauss_std = torch.sqrt(torch.tensor(self.gauss_var)).to(self.device) * (1/t_expanded**2)
-    #     poisson_scale = torch.tensor(self.poisson_scale).to(self.device) * (1/t_expanded**2)
-        
-    #     # Shot noise
-    #     shot_noise = torch.poisson(phi_scaled/poisson_scale) * poisson_scale * g_expanded
-    #     # Readout noise
-    #     readout_noise = gauss_std * torch.randn_like(phi_scaled) * g_expanded
-    #     # ADC noise
-    #     adc_noise = gauss_std * torch.randn_like(phi_scaled)
-        
-    #     noise_hdr = shot_noise + readout_noise + adc_noise
-
-    #     # # Adjust dynamic range for low exposure values
-    #     # # Apply gamma correction for low exposure values after noise is added
-    #     # if torch.any(self.exp < 1.0):  # Assuming exp < 1.0 means low exposure
-    #     #     noise_hdr = torch.pow(noise_hdr, 1 / self.exp)
             
-    #     noise_ldr = torch.clamp(noise_hdr, 0, 1)
+        normalize_ldr = (noise_ldr - noise_ldr.min()) / (noise_ldr.max() - noise_ldr.min())
+        remap_ldr2hdr = lower_bound + normalize_ldr * (higher_bound - lower_bound)
         
-    #     return noise_ldr
+                
+        # print(f"[DEBUG] : remap_ldr2hdr min, max : {remap_ldr2hdr.min()} {remap_ldr2hdr.max()}")
+        
+        return normalize_ldr.to(self.device)
+
     
 
 class QuantizeSTE(torch.autograd.Function):

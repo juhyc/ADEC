@@ -86,8 +86,8 @@ class RealDataset(Dataset):
     def __init__(self, root='datasets/Real', transform=None, image_set = 'training', test_date_folders=None):
         self.image_list = []
         self.transform = transform
-        self.camera_param = np.load('/home/user/juhyung/SAEC/datasets/Real/post.npz')
-        self.camera_param_path  ='/home/user/juhyung/SAEC/datasets/Real/post.npz'
+        self.camera_param = np.load('datasets/camera_params/post.npz')
+        self.camera_param_path  ='datasets/camera_params/post.npz'
 
         self.experiment_names = []
         
@@ -98,20 +98,12 @@ class RealDataset(Dataset):
         [0.00000000e+00, 0.00000000e+00, 0.00000000e+00, 1.00000000e+00]
          ])
 
+        date_folders = sorted(os.listdir(root)) 
         
-        date_folders = sorted(os.listdir(root)) # 날짜별 폴더
-        
-        # if image_set == 'test':
-        #     # test인 경우 test_date_folder에 해당하는 폴더만 사용
-        #     if test_date_folder in date_folders:
-        #         date_folders = [test_date_folder]
-        #     else:
-        #         raise ValueError(f"Test date folder '{test_date_folder}' not found in dataset.")
-        
-        # Training일 경우 전체 데이터 불러오기
+        # Training
         if image_set == 'training':
             date_folders = sorted(os.listdir(root))
-        # Test일 경우, test_date_folders 리스트의 폴더만 불러오기
+        # Test
         elif image_set == 'test' and test_date_folders:
             date_folders = [os.path.basename(folder) for folder in test_date_folders]
         else:
@@ -120,7 +112,7 @@ class RealDataset(Dataset):
         
         for date_folder in date_folders:
             date_path = os.path.join(root, date_folder)
-            time_folders = sorted(os.listdir(date_path))  # 시간별 폴더
+            time_folders = sorted(os.listdir(date_path)) 
             
             for time_folder in time_folders:
                 folder_path = os.path.join(date_path, time_folder)
@@ -136,13 +128,13 @@ class RealDataset(Dataset):
                     print(f"Missing data in {folder_path}, skipping this folder.")
 
         if image_set == 'training':
-            np.random.shuffle(self.image_list)  # training일 경우 전체 데이터를 섞
+            np.random.shuffle(self.image_list)
         
     def __len__(self):
-        return len(self.image_list) - 1  # Stereo 쌍을 위해 홀수 개는 제거
+        return len(self.image_list) - 1  
     
     def __getitem__(self, index):
-        # 첫번째 이미지쌍 불러오기
+        # First frame stereo
         left_path1, right_path1, point_path1 = self.image_list[index]
         left_data1 = np.load(left_path1)
         right_data1 = np.load(right_path1)
@@ -150,7 +142,7 @@ class RealDataset(Dataset):
         left1 = left_data1
         right1 = right_data1
         
-        # 두번째 이미지쌍 불러오기
+        # Second frame stereo
         left_path2, right_path2, point_path2 = self.image_list[index + 1]
         left_data2 = np.load(left_path2)
         right_data2 = np.load(right_path2)
@@ -161,7 +153,6 @@ class RealDataset(Dataset):
         # focal_length, baseline
         focal_length = self.camera_param['k_left'][0,0]
         baseline = np.abs(self.camera_param['T'][0,0])
-        
         
         left_32bit_1 = convert_to_32bit_bayer_rg24_2(left1, left1.shape[1], left1.shape[0])
         right_32bit_1 = convert_to_32bit_bayer_rg24_2(right1, right1.shape[1], right1.shape[0])
@@ -180,11 +171,10 @@ class RealDataset(Dataset):
         left2_rgb = bilateralFilter(left2_rgb)
         right2_rgb = bilateralFilter(right2_rgb)
         
-        # Rectification 수행
+        # Rectification
         left1_rect, right1_rect = self.calibrate_frame(left1_rgb, right1_rgb, self.camera_param_path)
         left2_rect, right2_rect = self.calibrate_frame(left2_rgb, right2_rgb, self.camera_param_path)
         
-        # Tensor로 변환
         left1_rect = torch.from_numpy(left1_rect).permute(2,0,1).float()
         right1_rect = torch.from_numpy(right1_rect).permute(2,0,1).float()
         left2_rect = torch.from_numpy(left2_rect).permute(2,0,1).float()
@@ -193,22 +183,21 @@ class RealDataset(Dataset):
         hdr_left1 = left1_rect*(2**24)
         hdr_left2 = left2_rect*(2**24)
         
-        left1_rect = (left1_rect-left1_rect.min())/(left1_rect.max()-left1_rect.min())
-        right1_rect = (right1_rect-right1_rect.min())/(right1_rect.max()-right1_rect.min())
-        left2_rect = (left2_rect-left2_rect.min())/(left2_rect.max()-left2_rect.min())
-        right2_rect = (right2_rect-right2_rect.min())/(right2_rect.max()-right2_rect.min())
+        # left1_rect = (left1_rect-left1_rect.min())/(left1_rect.max()-left1_rect.min())
+        # right1_rect = (right1_rect-right1_rect.min())/(right1_rect.max()-right1_rect.min())
+        # left2_rect = (left2_rect-left2_rect.min())/(left2_rect.max()-left2_rect.min())
+        # right2_rect = (right2_rect-right2_rect.min())/(right2_rect.max()-right2_rect.min())
         
         # Lidar point sampling
         points = transform_point_inverse(point_data1, self.transform_mtx)
         points = project_points_on_camera(points, 1323.50, 684, 557,1440,928)
-        
         
         return [self.image_list[index], self.image_list[index + 1]], left1_rect, right1_rect, left2_rect, right2_rect, focal_length, baseline, points, hdr_left1, hdr_left2
     
     def calibrate_frame(self, left, right, post_path):
         post_np = np.load(post_path)
         
-        # Calibration 값 불러오기
+        # Load calibration configurations
         k_left = post_np["k_left"]
         dist_left = post_np["d_left"]
         k_right = post_np["k_right"]
@@ -216,7 +205,7 @@ class RealDataset(Dataset):
         R = post_np["R"]
         T = post_np["T"]
         
-        # Calibration 수행
+        # Calibration
         calib_image_size = (1440, 928)
         # input_image_size = (left.shape[1], left.shape[0])  # (width, height)
         
@@ -238,13 +227,11 @@ class RealDataset(Dataset):
     
     def get_experiment_name(self, index):
         """Return the experiment name based on the index."""
-        # 한 실험당 이미지 쌍 개수를 구해서 나눈 값을 사용해 experiment 이름을 가져옵니다.
         images_per_experiment = len(self.image_list) // len(self.experiment_names)
         experiment_index = index // images_per_experiment
         return self.experiment_names[experiment_index]
 
 def collate_fn(batch):
-    # None 값을 제거하고 유효한 데이터만 반환
     batch = [data for data in batch if data is not None]
     
     if len(batch) == 0:
@@ -252,50 +239,26 @@ def collate_fn(batch):
     
     return default_collate(batch)
 
-# def fetch_real_dataloader(args):
-    
-#     if 'real' in args.train_datasets:
-#         train_dataset = RealDataset(root='datasets/Real', image_set='training')
-#         print(f"Samples : {len(train_dataset)}")
-#         logging.info(f"Adding {len(train_dataset)} training samples from Real")
-#     if 'test_real' in args.train_datasets:
-#         # test_dataset = RealDataset(root='datasets/Real', image_set='test', test_date_folder='09_28_18_test6')
-#         test_dataset = RealDataset(root='datasets/Real_test', image_set='test', test_date_folder='Test2')
-#         print(f"Samples : {len(test_dataset)}")
-#         logging.info(f"Adding {len(test_dataset)} training samples from test_Real")
-
-#     real_loader = DataLoader(
-#         train_dataset if 'real' in args.train_datasets else test_dataset, 
-#         batch_size=args.batch_size, 
-#         shuffle=('real' in args.train_datasets),  # training일 경우만 shuffle
-#         num_workers=4, 
-#         pin_memory=True, 
-#         drop_last=True, 
-#         collate_fn=collate_fn
-#     )
-    
-#     return real_loader
-
 def fetch_real_dataloader(args):
     if 'real' in args.train_datasets:
         train_dataset = RealDataset(root='datasets/Real', image_set='training')
         print(f"Samples : {len(train_dataset)}")
         logging.info(f"Adding {len(train_dataset)} training samples from Real")
+    
     if 'test_real' in args.train_datasets:
-        # 'Test[1-9]*' 패턴을 사용해 Real_test 폴더의 디렉터리 목록을 가져옵니다.
-        test_date_folders = sorted(glob_module.glob('datasets/Real_test/Test1'))
+        test_date_folders = sorted(glob_module.glob('datasets/Real/Test7'))
         # test_date_folders = sorted(glob_module.glob('datasets/Real_test/Test15'))
         if not test_date_folders:
             raise ValueError("No test folders found with pattern 'Test[1-9]*' in Real_test directory.")
         
-        test_dataset = RealDataset(root='datasets/Review', image_set='test', test_date_folders=test_date_folders)
+        test_dataset = RealDataset(root='datasets/Real', image_set='test', test_date_folders=test_date_folders)
         print(f"Samples : {len(test_dataset)}")
         logging.info(f"Adding {len(test_dataset)} testing samples from Real_test")
 
     real_loader = DataLoader(
         train_dataset if 'real' in args.train_datasets else test_dataset, 
         batch_size=args.batch_size, 
-        shuffle=('real' in args.train_datasets),  # training일 경우만 shuffle
+        shuffle=('real' in args.train_datasets), 
         num_workers=4, 
         pin_memory=True, 
         drop_last=True, 
