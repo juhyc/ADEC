@@ -18,8 +18,11 @@ datasets/
 ## Model parameter directory
 ```
 models/
-└── raftstereo_carla_4000.pth (finetuned RAFT-stereo on CARLA synthetic dataset)
-└── 15000_disp_recon_feature_fusion.pth (disp_recon_model.py paramter)
+└── 5000_disp_gru_eth3d.pth
+└── 5000_disp_gru_sceneflow.pth
+└── 10000_disp_gru_eth3d.pth
+└── 10000_disp_gru_sceneflow.pth
+
 ```
 
 
